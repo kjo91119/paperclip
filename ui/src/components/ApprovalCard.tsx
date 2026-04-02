@@ -14,6 +14,14 @@ function statusIcon(status: string) {
   return null;
 }
 
+function statusLabel(status: string) {
+  if (status === "approved") return "승인됨";
+  if (status === "rejected") return "거절됨";
+  if (status === "revision_requested") return "수정 요청";
+  if (status === "pending") return "대기 중";
+  return status;
+}
+
 export function ApprovalCard({
   approval,
   requesterAgent,
@@ -47,14 +55,14 @@ export function ApprovalCard({
             <span className="font-medium text-sm">{label}</span>
             {requesterAgent && (
               <span className="text-xs text-muted-foreground">
-                requested by <Identity name={requesterAgent.name} size="sm" className="inline-flex" />
+                요청자 <Identity name={requesterAgent.name} size="sm" className="inline-flex" />
               </span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {statusIcon(approval.status)}
-          <span className="text-xs text-muted-foreground capitalize">{approval.status}</span>
+          <span className="text-xs text-muted-foreground">{statusLabel(approval.status)}</span>
           <span className="text-xs text-muted-foreground">· {timeAgo(approval.createdAt)}</span>
         </div>
       </div>
@@ -65,7 +73,7 @@ export function ApprovalCard({
       {/* Decision note */}
       {approval.decisionNote && (
         <div className="mt-3 text-xs text-muted-foreground italic border-t border-border pt-2">
-          Note: {approval.decisionNote}
+          메모: {approval.decisionNote}
         </div>
       )}
 
@@ -78,7 +86,7 @@ export function ApprovalCard({
             onClick={onApprove}
             disabled={isPending}
           >
-            Approve
+            승인
           </Button>
           <Button
             variant="destructive"
@@ -86,18 +94,18 @@ export function ApprovalCard({
             onClick={onReject}
             disabled={isPending}
           >
-            Reject
+            거절
           </Button>
         </div>
       )}
       <div className="mt-3">
         {detailLink ? (
           <Button variant="ghost" size="sm" className="text-xs px-0" asChild>
-            <Link to={detailLink}>View details</Link>
+            <Link to={detailLink}>자세히 보기</Link>
           </Button>
         ) : (
           <Button variant="ghost" size="sm" className="text-xs px-0" onClick={onOpen}>
-            View details
+            자세히 보기
           </Button>
         )}
       </div>
