@@ -53,7 +53,7 @@ function autoResizeTextarea(element: HTMLTextAreaElement | null) {
 }
 
 function formatLastRunTimestamp(value: Date | string | null | undefined) {
-  if (!value) return "Never";
+  if (!value) return "없음";
   return new Date(value).toLocaleString();
 }
 
@@ -87,7 +87,7 @@ export function Routines() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Routines" }]);
+    setBreadcrumbs([{ label: "루틴" }]);
   }, [setBreadcrumbs]);
 
   const { data: routines, isLoading, error } = useQuery({
@@ -218,7 +218,7 @@ export function Routines() {
   const currentProject = draft.projectId ? projectById.get(draft.projectId) ?? null : null;
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Repeat} message="Select a company to view routines." />;
+    return <EmptyState icon={Repeat} message="루틴을 보려면 회사를 선택하세요." />;
   }
 
   if (isLoading) {
@@ -230,16 +230,16 @@ export function Routines() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            Routines
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">Beta</span>
+            루틴
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-900/30 dark:text-amber-400">베타</span>
           </h1>
           <p className="text-sm text-muted-foreground">
-            Recurring work definitions that materialize into auditable execution issues.
+            반복 작업 정의를 만들고, 실행 가능한 이슈로 자동 생성합니다.
           </p>
         </div>
         <Button onClick={() => setComposerOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          Create routine
+          루틴 만들기
         </Button>
       </div>
 
@@ -257,9 +257,9 @@ export function Routines() {
         >
           <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-5 py-3">
             <div>
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">New routine</p>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">새 루틴</p>
               <p className="text-sm text-muted-foreground">
-                Define the recurring work first. Trigger setup comes next on the detail page.
+                반복 작업 내용을 먼저 정의하세요. 트리거 설정은 다음 화면에서 이어집니다.
               </p>
             </div>
             <Button
@@ -271,7 +271,7 @@ export function Routines() {
               }}
               disabled={createRoutine.isPending}
             >
-              Cancel
+              취소
             </Button>
           </div>
 
@@ -280,7 +280,7 @@ export function Routines() {
               <textarea
                 ref={titleInputRef}
                 className="w-full resize-none overflow-hidden bg-transparent text-xl font-semibold outline-none placeholder:text-muted-foreground/50"
-                placeholder="Routine title"
+                placeholder="루틴 제목"
                 rows={1}
                 value={draft.title}
                 onChange={(event) => {
@@ -313,15 +313,15 @@ export function Routines() {
             <div className="px-5 pb-3">
               <div className="overflow-x-auto overscroll-x-contain">
                 <div className="inline-flex min-w-full flex-wrap items-center gap-2 text-sm text-muted-foreground sm:min-w-max sm:flex-nowrap">
-                  <span>For</span>
+                  <span>담당</span>
                   <InlineEntitySelector
                     ref={assigneeSelectorRef}
                     value={draft.assigneeAgentId}
                     options={assigneeOptions}
-                    placeholder="Assignee"
-                    noneLabel="No assignee"
-                    searchPlaceholder="Search assignees..."
-                    emptyMessage="No assignees found."
+                    placeholder="담당자"
+                    noneLabel="담당자 없음"
+                    searchPlaceholder="담당자 검색..."
+                    emptyMessage="담당자를 찾을 수 없습니다."
                     onChange={(assigneeAgentId) => {
                       if (assigneeAgentId) trackRecentAssignee(assigneeAgentId);
                       setDraft((current) => ({ ...current, assigneeAgentId }));
@@ -344,7 +344,7 @@ export function Routines() {
                           <span className="truncate">{option.label}</span>
                         )
                       ) : (
-                        <span className="text-muted-foreground">Assignee</span>
+                        <span className="text-muted-foreground">담당자</span>
                       )
                     }
                     renderOption={(option) => {
@@ -358,15 +358,15 @@ export function Routines() {
                       );
                     }}
                   />
-                  <span>in</span>
+                  <span>프로젝트</span>
                   <InlineEntitySelector
                     ref={projectSelectorRef}
                     value={draft.projectId}
                     options={projectOptions}
-                    placeholder="Project"
-                    noneLabel="No project"
-                    searchPlaceholder="Search projects..."
-                    emptyMessage="No projects found."
+                    placeholder="프로젝트"
+                    noneLabel="프로젝트 없음"
+                    searchPlaceholder="프로젝트 검색..."
+                    emptyMessage="프로젝트를 찾을 수 없습니다."
                     onChange={(projectId) => setDraft((current) => ({ ...current, projectId }))}
                     onConfirm={() => descriptionEditorRef.current?.focus()}
                     renderTriggerValue={(option) =>
@@ -379,7 +379,7 @@ export function Routines() {
                           <span className="truncate">{option.label}</span>
                         </>
                       ) : (
-                        <span className="text-muted-foreground">Project</span>
+                        <span className="text-muted-foreground">프로젝트</span>
                       )
                     }
                     renderOption={(option) => {
@@ -405,7 +405,7 @@ export function Routines() {
                 ref={descriptionEditorRef}
                 value={draft.description}
                 onChange={(description) => setDraft((current) => ({ ...current, description }))}
-                placeholder="Add instructions..."
+                placeholder="지시사항을 추가해보세요..."
                 bordered={false}
                 contentClassName="min-h-[160px] text-sm text-muted-foreground"
                 onSubmit={() => {
@@ -420,15 +420,15 @@ export function Routines() {
               <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
                 <CollapsibleTrigger className="flex w-full items-center justify-between text-left">
                   <div>
-                    <p className="text-sm font-medium">Advanced delivery settings</p>
-                    <p className="text-sm text-muted-foreground">Keep policy controls secondary to the work definition.</p>
+                    <p className="text-sm font-medium">고급 전달 설정</p>
+                    <p className="text-sm text-muted-foreground">정책 제어는 작업 정의보다 뒤에 두는 편이 좋습니다.</p>
                   </div>
                   {advancedOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                 </CollapsibleTrigger>
                 <CollapsibleContent className="pt-3">
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Concurrency</p>
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">동시성</p>
                       <Select
                         value={draft.concurrencyPolicy}
                         onValueChange={(concurrencyPolicy) => setDraft((current) => ({ ...current, concurrencyPolicy }))}
@@ -445,7 +445,7 @@ export function Routines() {
                       <p className="text-xs text-muted-foreground">{concurrencyPolicyDescriptions[draft.concurrencyPolicy]}</p>
                     </div>
                     <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Catch-up</p>
+                      <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">누락 보정</p>
                       <Select
                         value={draft.catchUpPolicy}
                         onValueChange={(catchUpPolicy) => setDraft((current) => ({ ...current, catchUpPolicy }))}
@@ -469,7 +469,7 @@ export function Routines() {
 
           <div className="shrink-0 flex flex-col gap-3 border-t border-border/60 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
-              After creation, Paperclip takes you straight to trigger setup for schedules, webhooks, or internal runs.
+              생성 후에는 바로 일정, 웹훅, 내부 실행용 트리거 설정으로 이동합니다.
             </div>
             <div className="flex flex-col gap-2 sm:items-end">
               <Button
@@ -482,11 +482,11 @@ export function Routines() {
                 }
               >
                 <Plus className="mr-2 h-4 w-4" />
-                {createRoutine.isPending ? "Creating..." : "Create routine"}
+                {createRoutine.isPending ? "생성 중..." : "루틴 만들기"}
               </Button>
               {createRoutine.isError ? (
                 <p className="text-sm text-destructive">
-                  {createRoutine.error instanceof Error ? createRoutine.error.message : "Failed to create routine"}
+                  {createRoutine.error instanceof Error ? createRoutine.error.message : "루틴 생성에 실패했습니다"}
                 </p>
               ) : null}
             </div>
@@ -497,7 +497,7 @@ export function Routines() {
       {error ? (
         <Card>
           <CardContent className="pt-6 text-sm text-destructive">
-            {error instanceof Error ? error.message : "Failed to load routines"}
+            {error instanceof Error ? error.message : "루틴을 불러오지 못했습니다"}
           </CardContent>
         </Card>
       ) : null}
@@ -507,7 +507,7 @@ export function Routines() {
           <div className="py-12">
             <EmptyState
               icon={Repeat}
-              message="No routines yet. Use Create routine to define the first recurring workflow."
+              message="아직 루틴이 없습니다. 첫 반복 워크플로를 만들려면 루틴 만들기를 눌러주세요."
             />
           </div>
         ) : (
@@ -515,11 +515,11 @@ export function Routines() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground border-b border-border">
-                  <th className="px-3 py-2 font-medium">Name</th>
-                  <th className="px-3 py-2 font-medium">Project</th>
-                  <th className="px-3 py-2 font-medium">Agent</th>
-                  <th className="px-3 py-2 font-medium">Last run</th>
-                  <th className="px-3 py-2 font-medium">Enabled</th>
+                  <th className="px-3 py-2 font-medium">이름</th>
+                  <th className="px-3 py-2 font-medium">프로젝트</th>
+                  <th className="px-3 py-2 font-medium">에이전트</th>
+                  <th className="px-3 py-2 font-medium">마지막 실행</th>
+                  <th className="px-3 py-2 font-medium">사용 여부</th>
                   <th className="w-12 px-3 py-2" />
                 </tr>
               </thead>

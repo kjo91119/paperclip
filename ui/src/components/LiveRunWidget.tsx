@@ -90,10 +90,10 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
     <div className="overflow-hidden rounded-xl border border-cyan-500/25 bg-background/80 shadow-[0_18px_50px_rgba(6,182,212,0.08)]">
       <div className="border-b border-border/60 bg-cyan-500/[0.04] px-4 py-3">
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-700 dark:text-cyan-300">
-          Live Runs
+          실시간 실행
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Streamed with the same transcript UI used on the full run detail page.
+          전체 실행 상세 화면과 같은 기록 UI로 스트리밍됩니다.
         </div>
       </div>
 
@@ -128,14 +128,14 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
                       className="inline-flex items-center gap-1 rounded-full border border-red-500/20 bg-red-500/[0.06] px-2.5 py-1 text-[11px] font-medium text-red-700 transition-colors hover:bg-red-500/[0.12] dark:text-red-300 disabled:opacity-50"
                     >
                       <Square className="h-2.5 w-2.5" fill="currentColor" />
-                      {cancellingRunIds.has(run.id) ? "Stopping…" : "Stop"}
+                      {cancellingRunIds.has(run.id) ? "중지 중..." : "중지"}
                     </button>
                   )}
                   <Link
                     to={`/agents/${run.agentId}/runs/${run.id}`}
                     className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[11px] font-medium text-cyan-700 transition-colors hover:border-cyan-500/30 hover:text-cyan-600 dark:text-cyan-300"
                   >
-                    Open run
+                    실행 열기
                     <ExternalLink className="h-3 w-3" />
                   </Link>
                 </div>
@@ -148,7 +148,7 @@ export function LiveRunWidget({ issueId, companyId }: LiveRunWidgetProps) {
                   limit={8}
                   streaming={isActive}
                   collapseStdout
-                  emptyMessage={hasOutputForRun(run.id) ? "Waiting for transcript parsing..." : "Waiting for run output..."}
+                  emptyMessage={hasOutputForRun(run.id) ? "기록을 정리하는 중입니다..." : "실행 출력이 도착하는 중입니다..."}
                 />
               </div>
             </section>

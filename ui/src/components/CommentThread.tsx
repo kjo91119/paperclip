@@ -162,12 +162,12 @@ function CommentCard({
             />
           </Link>
         ) : (
-          <Identity name="You" size="sm" />
+          <Identity name="나" size="sm" />
         )}
         <span className="flex items-center gap-1.5">
           {isQueued ? (
             <span className="inline-flex items-center rounded-full border border-amber-400/60 bg-amber-100/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-amber-800 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200">
-              Queued
+              대기열
             </span>
           ) : null}
           {companyId && !isPending ? (
@@ -187,7 +187,7 @@ function CommentCard({
             />
           ) : null}
           {isPending ? (
-            <span className="text-xs text-muted-foreground">{isQueued ? "Queueing..." : "Sending..."}</span>
+            <span className="text-xs text-muted-foreground">{isQueued ? "대기열에 넣는 중..." : "전송 중..."}</span>
           ) : (
             <a
               href={`#comment-${comment.id}`}
@@ -467,7 +467,7 @@ export function CommentThread({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">Comments &amp; Runs ({timeline.length + queuedComments.length})</h3>
+      <h3 className="text-sm font-semibold">댓글 &amp; 실행 ({timeline.length + queuedComments.length})</h3>
 
       {timeline.length > 0 ? (
         <TimelineList
@@ -485,7 +485,7 @@ export function CommentThread({
         <div className="space-y-3">
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700 dark:text-amber-300">
-              Queued Comments ({queuedComments.length})
+              대기 중인 댓글 ({queuedComments.length})
             </h4>
             {onInterruptQueued && queuedComments[0]?.queueTargetRunId ? (
               <Button
@@ -495,7 +495,7 @@ export function CommentThread({
                 disabled={interruptingQueuedRunId === queuedComments[0].queueTargetRunId}
                 onClick={() => void onInterruptQueued(queuedComments[0]!.queueTargetRunId!)}
               >
-                {interruptingQueuedRunId === queuedComments[0].queueTargetRunId ? "Interrupting..." : "Interrupt"}
+                {interruptingQueuedRunId === queuedComments[0].queueTargetRunId ? "중단 중..." : "중단"}
               </Button>
             ) : null}
           </div>
@@ -520,7 +520,7 @@ export function CommentThread({
           ref={editorRef}
           value={body}
           onChange={setBody}
-          placeholder="Leave a comment..."
+          placeholder="댓글을 남겨보세요..."
           mentions={mentions}
           onSubmit={handleSubmit}
           imageUploadHandler={imageUploadHandler}
@@ -541,7 +541,7 @@ export function CommentThread({
                 size="icon-sm"
                 onClick={() => attachInputRef.current?.click()}
                 disabled={attaching}
-                title="Attach image"
+                title="이미지 첨부"
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
@@ -554,20 +554,20 @@ export function CommentThread({
               onChange={(e) => setReopen(e.target.checked)}
               className="rounded border-border"
             />
-            Re-open
+            다시 열기
           </label>
           {enableReassign && reassignOptions.length > 0 && (
             <InlineEntitySelector
               value={reassignTarget}
               options={reassignOptions}
-              placeholder="Assignee"
-              noneLabel="No assignee"
-              searchPlaceholder="Search assignees..."
-              emptyMessage="No assignees found."
+              placeholder="담당자"
+              noneLabel="담당자 없음"
+              searchPlaceholder="담당자 검색..."
+              emptyMessage="담당자를 찾을 수 없습니다."
               onChange={setReassignTarget}
               className="text-xs h-8"
               renderTriggerValue={(option) => {
-                if (!option) return <span className="text-muted-foreground">Assignee</span>;
+                if (!option) return <span className="text-muted-foreground">담당자</span>;
                 const agentId = option.id.startsWith("agent:") ? option.id.slice("agent:".length) : null;
                 const agent = agentId ? agentMap?.get(agentId) : null;
                 return (
@@ -595,7 +595,7 @@ export function CommentThread({
             />
           )}
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
-            {submitting ? "Posting..." : "Comment"}
+            {submitting ? "등록 중..." : "댓글 달기"}
           </Button>
         </div>
       </div>

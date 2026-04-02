@@ -39,7 +39,7 @@ import { RunButton, PauseResumeButton } from "../components/AgentActionButtons";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { PackageFileTree, buildFileTree } from "../components/PackageFileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
-import { formatCents, formatDate, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { formatCents, formatClockTime, formatDate, formatStatusLabel, relativeTime, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -343,7 +343,7 @@ function WorkspaceOperationStatusBadge({ status }: { status: WorkspaceOperation[
         workspaceOperationStatusTone(status),
       )}
     >
-      {status.replace("_", " ")}
+      {formatStatusLabel(status)}
     </span>
   );
 }
@@ -393,7 +393,7 @@ function WorkspaceOperationLogViewer({
               {chunks.map((chunk, index) => (
                 <div key={`${chunk.ts}-${index}`} className="flex gap-2">
                   <span className="shrink-0 text-neutral-500">
-                    {new Date(chunk.ts).toLocaleTimeString("en-US", { hour12: false })}
+                    {formatClockTime(chunk.ts, { hour12: false })}
                   </span>
                   <span
                     className={cn(
@@ -884,7 +884,7 @@ export function AgentDetail() {
                 }}
               >
                 <RotateCcw className="h-3 w-3" />
-                Reset Sessions
+                세션 초기화
               </button>
               <button
                 className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
@@ -1223,7 +1223,7 @@ function AgentOverview({
 
       {/* Costs */}
       <div className="space-y-3">
-        <h3 className="text-sm font-medium">Costs</h3>
+        <h3 className="text-sm font-medium">비용</h3>
         <CostsSection runtimeState={runtimeState} runs={runs} />
       </div>
     </div>
@@ -1252,19 +1252,19 @@ function CostsSection({
         <div className="border border-border rounded-lg p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 tabular-nums">
             <div>
-              <span className="text-xs text-muted-foreground block">Input tokens</span>
+              <span className="text-xs text-muted-foreground block">입력 토큰</span>
               <span className="text-lg font-semibold">{formatTokens(runtimeState.totalInputTokens)}</span>
             </div>
             <div>
-              <span className="text-xs text-muted-foreground block">Output tokens</span>
+              <span className="text-xs text-muted-foreground block">출력 토큰</span>
               <span className="text-lg font-semibold">{formatTokens(runtimeState.totalOutputTokens)}</span>
             </div>
             <div>
-              <span className="text-xs text-muted-foreground block">Cached tokens</span>
+              <span className="text-xs text-muted-foreground block">캐시 토큰</span>
               <span className="text-lg font-semibold">{formatTokens(runtimeState.totalCachedInputTokens)}</span>
             </div>
             <div>
-              <span className="text-xs text-muted-foreground block">Total cost</span>
+              <span className="text-xs text-muted-foreground block">총 비용</span>
               <span className="text-lg font-semibold">{formatCents(runtimeState.totalCostCents)}</span>
             </div>
           </div>
@@ -1275,11 +1275,11 @@ function CostsSection({
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-accent/20">
-                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Date</th>
-                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Run</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Input</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Output</th>
-                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Cost</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">날짜</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">실행</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">입력</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">출력</th>
+                <th className="text-right px-3 py-2 font-medium text-muted-foreground">비용</th>
               </tr>
             </thead>
             <tbody>
@@ -2824,7 +2824,7 @@ function RunsTab({
   const { isMobile } = useSidebar();
 
   if (runs.length === 0) {
-    return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+    return <p className="text-sm text-muted-foreground">아직 실행 기록이 없습니다.</p>;
   }
 
   // Sort by created descending
@@ -2846,7 +2846,7 @@ function RunsTab({
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors no-underline"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            Back to runs
+            실행 목록으로
           </Link>
           <RunDetail key={selectedRun.id} run={selectedRun} agentRouteId={agentRouteId} adapterType={adapterType} />
         </div>
@@ -3025,8 +3025,8 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
   }, [isRunning, run.startedAt]);
 
   const timeFormat: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false };
-  const startTime = run.startedAt ? new Date(run.startedAt).toLocaleTimeString("en-US", timeFormat) : null;
-  const endTime = run.finishedAt ? new Date(run.finishedAt).toLocaleTimeString("en-US", timeFormat) : null;
+  const startTime = run.startedAt ? formatClockTime(run.startedAt, timeFormat) : null;
+  const endTime = run.finishedAt ? formatClockTime(run.finishedAt, timeFormat) : null;
   const durationSec = run.startedAt && run.finishedAt
     ? Math.round((new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()) / 1000)
     : null;
@@ -3054,7 +3054,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                   onClick={() => cancelRun.mutate()}
                   disabled={cancelRun.isPending}
                 >
-                  {cancelRun.isPending ? "Cancelling…" : "Cancel"}
+                  {cancelRun.isPending ? "취소 중..." : "취소"}
                 </Button>
               )}
               {canResumeLostRun && (
@@ -3066,7 +3066,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                   disabled={resumeRun.isPending}
                 >
                   <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                  {resumeRun.isPending ? "Resuming…" : "Resume"}
+                  {resumeRun.isPending ? "재개 중..." : "재개"}
                 </Button>
               )}
               {canRetryRun && !canResumeLostRun && (
@@ -3078,18 +3078,18 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                   disabled={retryRun.isPending}
                 >
                   <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                  {retryRun.isPending ? "Retrying…" : "Retry"}
+                  {retryRun.isPending ? "다시 시도 중..." : "다시 시도"}
                 </Button>
               )}
             </div>
             {resumeRun.isError && (
               <div className="text-xs text-destructive">
-                {resumeRun.error instanceof Error ? resumeRun.error.message : "Failed to resume run"}
+                {resumeRun.error instanceof Error ? resumeRun.error.message : "실행 재개에 실패했습니다"}
               </div>
             )}
             {retryRun.isError && (
               <div className="text-xs text-destructive">
-                {retryRun.error instanceof Error ? retryRun.error.message : "Failed to retry run"}
+                {retryRun.error instanceof Error ? retryRun.error.message : "실행 재시도에 실패했습니다"}
               </div>
             )}
             {startTime && (
@@ -3105,7 +3105,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                 </div>
                 {displayDurationSec !== null && (
                   <div className="text-xs text-muted-foreground">
-                    Duration: {displayDurationSec >= 60 ? `${Math.floor(displayDurationSec / 60)}m ${displayDurationSec % 60}s` : `${displayDurationSec}s`}
+                    소요 시간: {displayDurationSec >= 60 ? `${Math.floor(displayDurationSec / 60)}분 ${displayDurationSec % 60}초` : `${displayDurationSec}초`}
                   </div>
                 )}
               </div>
@@ -3125,18 +3125,18 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                   onClick={() => runClaudeLogin.mutate()}
                   disabled={runClaudeLogin.isPending}
                 >
-                  {runClaudeLogin.isPending ? "Running claude login..." : "Login to Claude Code"}
+                  {runClaudeLogin.isPending ? "Claude 로그인 실행 중..." : "Claude Code 로그인"}
                 </Button>
                 {runClaudeLogin.isError && (
                   <p className="text-xs text-destructive">
                     {runClaudeLogin.error instanceof Error
                       ? runClaudeLogin.error.message
-                      : "Failed to run Claude login"}
+                      : "Claude 로그인 실행에 실패했습니다"}
                   </p>
                 )}
                 {claudeLoginResult?.loginUrl && (
                   <p className="text-xs">
-                    Login URL:
+                    로그인 URL:
                     <a
                       href={claudeLoginResult.loginUrl}
                       className="text-blue-600 underline underline-offset-2 ml-1 break-all dark:text-blue-400"
@@ -3165,7 +3165,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
             )}
             {hasNonZeroExit && (
               <div className="text-xs text-red-600 dark:text-red-400">
-                Exit code {run.exitCode}
+                종료 코드 {run.exitCode}
                 {run.signal && <span className="text-muted-foreground ml-1">(signal: {run.signal})</span>}
               </div>
             )}
@@ -3175,19 +3175,19 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
           {hasMetrics && (
             <div className="border-t sm:border-t-0 sm:border-l border-border p-4 grid grid-cols-2 gap-x-4 sm:gap-x-8 gap-y-3 content-center tabular-nums">
               <div>
-                <div className="text-xs text-muted-foreground">Input</div>
+                <div className="text-xs text-muted-foreground">입력</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.input)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Output</div>
+                <div className="text-xs text-muted-foreground">출력</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.output)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Cached</div>
+                <div className="text-xs text-muted-foreground">캐시</div>
                 <div className="text-sm font-medium font-mono">{formatTokens(metrics.cached)}</div>
               </div>
               <div>
-                <div className="text-xs text-muted-foreground">Cost</div>
+                <div className="text-xs text-muted-foreground">비용</div>
                 <div className="text-sm font-medium font-mono">{metrics.cost > 0 ? `$${metrics.cost.toFixed(4)}` : "-"}</div>
               </div>
             </div>
@@ -3202,20 +3202,20 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
               onClick={() => setSessionOpen((v) => !v)}
             >
               <ChevronRight className={cn("h-3 w-3 transition-transform", sessionOpen && "rotate-90")} />
-              Session
-              {sessionChanged && <span className="text-yellow-400 ml-1">(changed)</span>}
+              세션
+              {sessionChanged && <span className="text-yellow-400 ml-1">(변경됨)</span>}
             </button>
             {sessionOpen && (
               <div className="px-4 pb-3 space-y-1 text-xs">
                 {run.sessionIdBefore && (
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground w-12">{sessionChanged ? "Before" : "ID"}</span>
+                    <span className="text-muted-foreground w-12">{sessionChanged ? "이전" : "ID"}</span>
                     <CopyText text={run.sessionIdBefore} className="font-mono" />
                   </div>
                 )}
                 {sessionChanged && run.sessionIdAfter && (
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground w-12">After</span>
+                    <span className="text-muted-foreground w-12">이후</span>
                     <CopyText text={run.sessionIdAfter} className="font-mono" />
                   </div>
                 )}
@@ -3228,21 +3228,21 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
                       onClick={() => {
                         const issueCount = touchedIssueIds.length;
                         const confirmed = window.confirm(
-                          `Clear session for ${issueCount} issue${issueCount === 1 ? "" : "s"} touched by this run?`,
+                          `이 실행이 건드린 이슈 ${issueCount}개의 세션을 모두 초기화할까요?`,
                         );
                         if (!confirmed) return;
                         clearSessionsForTouchedIssues.mutate();
                       }}
                     >
                       {clearSessionsForTouchedIssues.isPending
-                        ? "clearing session..."
-                        : "clear session for these issues"}
+                        ? "세션 초기화 중..."
+                        : "이 이슈들의 세션 초기화"}
                     </button>
                     {clearSessionsForTouchedIssues.isError && (
                       <p className="text-[11px] text-destructive mt-1">
                         {clearSessionsForTouchedIssues.error instanceof Error
                           ? clearSessionsForTouchedIssues.error.message
-                          : "Failed to clear sessions"}
+                          : "세션 초기화에 실패했습니다"}
                       </p>
                     )}
                   </div>
@@ -3256,7 +3256,7 @@ function RunDetail({ run: initialRun, agentRouteId, adapterType }: { run: Heartb
       {/* Issues touched by this run */}
       {touchedIssues && touchedIssues.length > 0 && (
         <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground">Issues Touched ({touchedIssues.length})</span>
+          <span className="text-xs font-medium text-muted-foreground">이번 실행이 건드린 이슈 ({touchedIssues.length})</span>
           <div className="border border-border rounded-lg divide-y divide-border">
             {touchedIssues.map((issue) => (
               <Link
@@ -3883,7 +3883,7 @@ function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType: strin
               return (
                 <div key={evt.id} className="flex gap-2">
                   <span className="text-neutral-400 dark:text-neutral-600 shrink-0 select-none w-16">
-                    {new Date(evt.createdAt).toLocaleTimeString("en-US", { hour12: false })}
+                    {formatClockTime(evt.createdAt, { hour12: false })}
                   </span>
                   <span className={cn("shrink-0 w-14", evt.stream ? (streamColors[evt.stream] ?? "text-neutral-500") : "text-neutral-500")}>
                     {evt.stream ? `[${evt.stream}]` : ""}

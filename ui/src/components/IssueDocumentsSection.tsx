@@ -179,7 +179,7 @@ export function IssueDocumentsSection({
       invalidateIssueDocuments();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Failed to delete document");
+      setError(err instanceof Error ? err.message : "문서 삭제에 실패했습니다");
     },
   });
 
@@ -195,7 +195,7 @@ export function IssueDocumentsSection({
       invalidateIssueDocuments();
     },
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "Failed to restore document revision");
+      setError(err instanceof Error ? err.message : "문서 리비전 복원에 실패했습니다");
     },
   });
 
@@ -372,11 +372,11 @@ export function IssueDocumentsSection({
           resetAutosaveState();
           return false;
         } catch {
-          setError("Document changed remotely and the latest version could not be loaded");
+          setError("문서가 원격에서 변경되었고 최신 버전을 불러오지 못했습니다");
           return false;
         }
       }
-      setError(err instanceof Error ? err.message : "Failed to save document");
+      setError(err instanceof Error ? err.message : "문서 저장에 실패했습니다");
       return false;
     }
   }, [documentConflict, invalidateIssueDocuments, issue.id, resetAutosaveState, runSave, sortedDocuments, upsertDocument]);
@@ -605,19 +605,19 @@ export function IssueDocumentsSection({
           {extraActions}
           <Button variant="outline" size="sm" onClick={beginNewDocument} className="shrink-0">
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-            <span className="hidden sm:inline">New document</span>
-            <span className="sm:hidden">New</span>
+            <span className="hidden sm:inline">새 문서</span>
+            <span className="sm:hidden">새로</span>
           </Button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2 min-w-0">
-          <h3 className="text-sm font-medium text-muted-foreground shrink-0">Documents</h3>
+          <h3 className="text-sm font-medium text-muted-foreground shrink-0">문서</h3>
           <div className="flex items-center gap-2 min-w-0">
             {extraActions}
             <Button variant="outline" size="sm" onClick={beginNewDocument} className="shrink-0">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              <span className="hidden sm:inline">New document</span>
-              <span className="sm:hidden">New</span>
+              <span className="hidden sm:inline">새 문서</span>
+              <span className="sm:hidden">새로</span>
             </Button>
           </div>
         </div>
@@ -637,7 +637,7 @@ export function IssueDocumentsSection({
             onChange={(event) =>
               setDraft((current) => current ? { ...current, key: event.target.value.toLowerCase() } : current)
             }
-            placeholder="Document key"
+            placeholder="문서 키"
           />
           {newDocumentKeyError && (
             <p className="text-xs text-destructive">{newDocumentKeyError}</p>
@@ -648,7 +648,7 @@ export function IssueDocumentsSection({
               onChange={(event) =>
                 setDraft((current) => current ? { ...current, title: event.target.value } : current)
               }
-              placeholder="Optional title"
+              placeholder="제목(선택)"
             />
           )}
           <MarkdownEditor
@@ -656,7 +656,7 @@ export function IssueDocumentsSection({
             onChange={(body) =>
               setDraft((current) => current ? { ...current, body } : current)
             }
-            placeholder="Markdown body"
+            placeholder="마크다운 본문"
             bordered={false}
             className="bg-transparent"
             contentClassName="min-h-[220px] text-[15px] leading-7"
@@ -667,14 +667,14 @@ export function IssueDocumentsSection({
           <div className="flex items-center justify-end gap-2">
             <Button variant="outline" size="sm" onClick={cancelDraft}>
               <X className="mr-1.5 h-3.5 w-3.5" />
-              Cancel
+              취소
             </Button>
             <Button
               size="sm"
               onClick={() => void commitDraft(draft, { clearAfterSave: false, trackAutosave: false })}
               disabled={upsertDocument.isPending}
             >
-              {upsertDocument.isPending ? "Saving..." : "Create document"}
+              {upsertDocument.isPending ? "저장 중..." : "문서 만들기"}
             </Button>
           </div>
         </div>
@@ -735,7 +735,7 @@ export function IssueDocumentsSection({
                       type="button"
                       className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
                       onClick={() => toggleFoldedDocument(doc.key)}
-                      aria-label={isFolded ? `Expand ${doc.key} document` : `Collapse ${doc.key} document`}
+                      aria-label={isFolded ? `${doc.key} 문서 펼치기` : `${doc.key} 문서 접기`}
                       aria-expanded={!isFolded}
                     >
                       {isFolded ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
@@ -761,9 +761,9 @@ export function IssueDocumentsSection({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" className="w-72">
-                        <DropdownMenuLabel>Revision history</DropdownMenuLabel>
+                        <DropdownMenuLabel>리비전 기록</DropdownMenuLabel>
                         {revisionMenuOpenKey === doc.key && isFetchingDocumentRevisions && revisionHistory.length === 0 ? (
-                          <DropdownMenuItem disabled>Loading revisions...</DropdownMenuItem>
+                          <DropdownMenuItem disabled>리비전 불러오는 중...</DropdownMenuItem>
                         ) : revisionHistory.length > 0 ? (
                           <DropdownMenuRadioGroup value={selectedRevisionId ?? doc.latestRevisionId ?? ""}>
                             {revisionHistory.map((revision) => {
@@ -780,7 +780,7 @@ export function IssueDocumentsSection({
                                       <span className="font-medium">rev {revision.revisionNumber}</span>
                                       {isCurrentRevision ? (
                                         <span className="rounded-full border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-                                          Current
+                                          현재본
                                         </span>
                                       ) : null}
                                     </div>
@@ -793,7 +793,7 @@ export function IssueDocumentsSection({
                             })}
                           </DropdownMenuRadioGroup>
                         ) : (
-                          <DropdownMenuItem disabled>No revisions yet</DropdownMenuItem>
+                          <DropdownMenuItem disabled>아직 리비전이 없습니다</DropdownMenuItem>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -801,7 +801,7 @@ export function IssueDocumentsSection({
                       href={`#document-${encodeURIComponent(doc.key)}`}
                       className="truncate text-[11px] text-muted-foreground transition-colors hover:text-foreground hover:underline"
                     >
-                      updated {relativeTime(displayedUpdatedAt)}
+                      업데이트 {relativeTime(displayedUpdatedAt)}
                     </a>
                   </div>
                   {showTitle && <p className="mt-2 text-sm font-medium">{displayedTitle}</p>}
@@ -814,7 +814,7 @@ export function IssueDocumentsSection({
                       "text-muted-foreground transition-colors",
                       copiedDocumentKey === doc.key && "text-foreground",
                     )}
-                    title={copiedDocumentKey === doc.key ? "Copied" : "Copy document"}
+                    title={copiedDocumentKey === doc.key ? "복사됨" : "문서 복사"}
                     onClick={() => void copyDocumentBody(doc.key, displayedBody)}
                   >
                     {copiedDocumentKey === doc.key ? (
@@ -829,7 +829,7 @@ export function IssueDocumentsSection({
                         variant="ghost"
                         size="icon-xs"
                         className="text-muted-foreground"
-                        title="Document actions"
+                        title="문서 작업"
                       >
                         <MoreHorizontal className="h-3.5 w-3.5" />
                       </Button>
@@ -839,7 +839,7 @@ export function IssueDocumentsSection({
                         onClick={() => downloadDocumentFile(doc.key, displayedBody)}
                       >
                         <Download className="h-3.5 w-3.5" />
-                        Download document
+                        문서 다운로드
                       </DropdownMenuItem>
                       {canDeleteDocuments ? <DropdownMenuSeparator /> : null}
                       {canDeleteDocuments ? (
@@ -848,7 +848,7 @@ export function IssueDocumentsSection({
                           onClick={() => setConfirmDeleteKey(doc.key)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                          Delete document
+                          문서 삭제
                         </DropdownMenuItem>
                       ) : null}
                     </DropdownMenuContent>
@@ -922,7 +922,7 @@ export function IssueDocumentsSection({
                         <div className="space-y-1">
                           <p className="text-sm font-medium text-amber-200">Out of date</p>
                           <p className="text-xs text-muted-foreground">
-                            This document changed while you were editing. Your local draft is preserved and autosave is paused.
+                            편집 중에 이 문서가 변경되었습니다. 로컬 초안은 보존되며 자동 저장은 잠시 멈춥니다.
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -958,7 +958,7 @@ export function IssueDocumentsSection({
                             onClick={() => void overwriteDocumentFromDraft(doc.key)}
                             disabled={upsertDocument.isPending}
                           >
-                            {upsertDocument.isPending ? "Saving..." : "Overwrite remote"}
+                            {upsertDocument.isPending ? "저장 중..." : "원격 버전 덮어쓰기"}
                           </Button>
                         </div>
                       </div>
@@ -967,7 +967,7 @@ export function IssueDocumentsSection({
                           <div className="mb-2 flex items-center gap-2 text-[11px] text-muted-foreground">
                             <span>Remote revision {activeConflict.serverDocument.latestRevisionNumber}</span>
                             <span>•</span>
-                            <span>updated {relativeTime(activeConflict.serverDocument.updatedAt)}</span>
+                            <span>업데이트 {relativeTime(activeConflict.serverDocument.updatedAt)}</span>
                           </div>
                           {!isPlanKey(doc.key) && activeConflict.serverDocument.title ? (
                             <p className="mb-2 text-sm font-medium">{activeConflict.serverDocument.title}</p>
@@ -1068,7 +1068,7 @@ export function IssueDocumentsSection({
                       onClick={() => setConfirmDeleteKey(null)}
                       disabled={deleteDocument.isPending}
                     >
-                      Cancel
+                      취소
                     </Button>
                     <Button
                       variant="destructive"

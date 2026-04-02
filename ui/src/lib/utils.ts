@@ -3,6 +3,36 @@ import { twMerge } from "tailwind-merge";
 import { deriveAgentUrlKey, deriveProjectUrlKey, normalizeProjectUrlKey, hasNonAsciiContent } from "@paperclipai/shared";
 import type { BillingType, FinanceDirection, FinanceEventKind } from "@paperclipai/shared";
 
+const DISPLAY_LOCALE = "ko-KR";
+
+const STATUS_LABELS: Record<string, string> = {
+  active: "활성",
+  approved: "승인됨",
+  archived: "보관됨",
+  cancelled: "취소됨",
+  completed: "완료",
+  failed: "실패",
+  hidden: "숨김",
+  in_progress: "진행 중",
+  live: "실행 중",
+  paused: "일시중지",
+  pending: "대기 중",
+  queued: "대기 중",
+  rejected: "거절됨",
+  running: "실행 중",
+  skipped: "건너뜀",
+  succeeded: "성공",
+  timed_out: "시간 초과",
+  todo: "할 일",
+};
+
+const PRIORITY_LABELS: Record<string, string> = {
+  critical: "긴급",
+  high: "높음",
+  medium: "보통",
+  low: "낮음",
+};
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
@@ -11,21 +41,38 @@ export function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+export function humanizeSnakeCase(value: string): string {
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function formatStatusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? humanizeSnakeCase(status);
+}
+
+export function formatPriorityLabel(priority: string): string {
+  return PRIORITY_LABELS[priority] ?? humanizeSnakeCase(priority);
+}
+
 export function formatDate(date: Date | string): string {
-  return new Date(date).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
+  return new Date(date).toLocaleDateString(DISPLAY_LOCALE, {
     year: "numeric",
+    month: "long",
+    day: "numeric",
   });
 }
 
 export function formatDateTime(date: Date | string): string {
-  return new Date(date).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
+  return new Date(date).toLocaleString(DISPLAY_LOCALE, {
     year: "numeric",
-    hour: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
   });
 }
 
@@ -33,14 +80,27 @@ export function relativeTime(date: Date | string): string {
   const now = Date.now();
   const then = new Date(date).getTime();
   const diffSec = Math.round((now - then) / 1000);
-  if (diffSec < 60) return "just now";
+  if (diffSec < 60) return "방금 전";
   const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return `${diffMin}분 전`;
   const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return `${diffHr}시간 전`;
   const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
+  if (diffDay < 30) return `${diffDay}일 전`;
   return formatDate(date);
+}
+
+export function formatClockTime(
+  date: Date | string,
+  options: Intl.DateTimeFormatOptions = {},
+): string {
+  return new Date(date).toLocaleTimeString(DISPLAY_LOCALE, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    ...options,
+  });
 }
 
 export function formatTokens(n: number): string {
