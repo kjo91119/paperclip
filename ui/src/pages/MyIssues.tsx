@@ -17,7 +17,7 @@ export function MyIssues() {
   const { setBreadcrumbs } = useBreadcrumbs();
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "My Issues" }]);
+    setBreadcrumbs([{ label: "미할당 이슈" }]);
   }, [setBreadcrumbs]);
 
   const { data: issues, isLoading, error } = useQuery({
@@ -27,16 +27,16 @@ export function MyIssues() {
   });
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={ListTodo} message="Select a company to view your issues." />;
+    return <EmptyState icon={ListTodo} message="미할당 이슈를 보려면 회사를 선택하세요." />;
   }
 
   if (isLoading) {
     return <PageSkeleton variant="list" />;
   }
 
-  // Show issues that are not assigned (user-created or unassigned)
+  // This page surfaces open issues that still need an assignee.
   const myIssues = (issues ?? []).filter(
-    (i) => !i.assigneeAgentId && !["done", "cancelled"].includes(i.status)
+    (i) => !i.assigneeAgentId && !["done", "cancelled"].includes(i.status),
   );
 
   return (
@@ -44,7 +44,7 @@ export function MyIssues() {
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
       {myIssues.length === 0 && (
-        <EmptyState icon={ListTodo} message="No issues assigned to you." />
+        <EmptyState icon={ListTodo} message="현재 열려 있는 미할당 이슈가 없습니다." />
       )}
 
       {myIssues.length > 0 && (
@@ -55,9 +55,7 @@ export function MyIssues() {
               identifier={issue.identifier ?? issue.id.slice(0, 8)}
               title={issue.title}
               to={`/issues/${issue.identifier ?? issue.id}`}
-              leading={
-                <StatusIcon status={issue.status} />
-              }
+              leading={<StatusIcon status={issue.status} />}
               trailing={
                 <span className="text-xs text-muted-foreground">
                   {formatDate(issue.createdAt)}

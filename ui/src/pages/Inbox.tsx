@@ -78,10 +78,14 @@ function firstNonEmptyLine(value: string | null | undefined): string | null {
 }
 
 function runFailureMessage(run: HeartbeatRun): string {
-  return firstNonEmptyLine(run.error) ?? firstNonEmptyLine(run.stderrExcerpt) ?? "Run exited with an error.";
+  return firstNonEmptyLine(run.error) ?? firstNonEmptyLine(run.stderrExcerpt) ?? "실행이 오류와 함께 종료되었습니다.";
 }
 
 function approvalStatusLabel(status: Approval["status"]): string {
+  if (status === "pending") return "대기 중";
+  if (status === "approved") return "승인됨";
+  if (status === "rejected") return "거절됨";
+  if (status === "revision_requested") return "수정 요청";
   return status.replaceAll("_", " ");
 }
 
@@ -154,7 +158,7 @@ export function InboxIssueMetaLeading({
               selected ? "text-muted-foreground" : "text-blue-600 dark:text-blue-400",
             )}
           >
-            Live
+            실시간
           </span>
         </span>
       )}
@@ -213,7 +217,7 @@ export function FailedRunInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   getSelectedUnreadButtonClass(selected),
                 )}
-                aria-label="Mark as read"
+                aria-label="읽음으로 표시"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -227,7 +231,7 @@ export function FailedRunInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label="받은 편지함에서 숨기기"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -258,7 +262,7 @@ export function FailedRunInboxRow({
                   {issue.title}
                 </>
               ) : (
-                <>Failed run{linkedAgentName ? ` — ${linkedAgentName}` : ""}</>
+                <>실패한 실행{linkedAgentName ? ` — ${linkedAgentName}` : ""}</>
               )}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -279,14 +283,14 @@ export function FailedRunInboxRow({
             disabled={isRetrying}
           >
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-            {isRetrying ? "Retrying…" : "Retry"}
+            {isRetrying ? "재시도 중…" : "재시도"}
           </Button>
           {!showUnreadSlot && (
             <button
               type="button"
               onClick={onDismiss}
               className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-              aria-label="Dismiss"
+              aria-label="숨기기"
             >
               <X className="h-4 w-4" />
             </button>
@@ -303,14 +307,14 @@ export function FailedRunInboxRow({
           disabled={isRetrying}
         >
           <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-          {isRetrying ? "Retrying…" : "Retry"}
+          {isRetrying ? "재시도 중…" : "재시도"}
         </Button>
         {!showUnreadSlot && (
           <button
             type="button"
             onClick={onDismiss}
             className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-            aria-label="Dismiss"
+            aria-label="숨기기"
           >
             <X className="h-4 w-4" />
           </button>
@@ -369,7 +373,7 @@ function ApprovalInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   getSelectedUnreadButtonClass(selected),
                 )}
-                aria-label="Mark as read"
+                aria-label="읽음으로 표시"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -383,7 +387,7 @@ function ApprovalInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label="받은 편지함에서 숨기기"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -409,9 +413,9 @@ function ApprovalInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="capitalize">{approvalStatusLabel(approval.status)}</span>
-              {requesterName ? <span>requested by {requesterName}</span> : null}
-              <span>updated {timeAgo(approval.updatedAt)}</span>
+              <span>{approvalStatusLabel(approval.status)}</span>
+              {requesterName ? <span>요청자 {requesterName}</span> : null}
+              <span>{timeAgo(approval.updatedAt)} 업데이트</span>
             </span>
           </span>
         </Link>
@@ -423,7 +427,7 @@ function ApprovalInboxRow({
               onClick={onApprove}
               disabled={isPending}
             >
-              Approve
+              승인
             </Button>
             <Button
               variant="destructive"
@@ -432,7 +436,7 @@ function ApprovalInboxRow({
               onClick={onReject}
               disabled={isPending}
             >
-              Reject
+              거절
             </Button>
           </div>
         ) : null}
@@ -445,7 +449,7 @@ function ApprovalInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            Approve
+            승인
           </Button>
           <Button
             variant="destructive"
@@ -454,7 +458,7 @@ function ApprovalInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            Reject
+            거절
           </Button>
         </div>
       ) : null}
@@ -487,8 +491,8 @@ function JoinRequestInboxRow({
 }) {
   const label =
     joinRequest.requestType === "human"
-      ? "Human join request"
-      : `Agent join request${joinRequest.agentName ? `: ${joinRequest.agentName}` : ""}`;
+      ? "사용자 참여 요청"
+      : `에이전트 참여 요청${joinRequest.agentName ? `: ${joinRequest.agentName}` : ""}`;
   const showUnreadSlot = unreadState !== null;
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
 
@@ -508,7 +512,7 @@ function JoinRequestInboxRow({
                   "inline-flex h-4 w-4 items-center justify-center rounded-full transition-colors",
                   getSelectedUnreadButtonClass(selected),
                 )}
-                aria-label="Mark as read"
+                aria-label="읽음으로 표시"
               >
                 <span className={cn(
                   "block h-2 w-2 rounded-full transition-opacity duration-300",
@@ -522,7 +526,7 @@ function JoinRequestInboxRow({
                 onClick={onArchive}
                 disabled={archiveDisabled}
                 className="inline-flex h-4 w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-30"
-                aria-label="Dismiss from inbox"
+                aria-label="받은 편지함에서 숨기기"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -542,8 +546,8 @@ function JoinRequestInboxRow({
               {label}
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span>requested {timeAgo(joinRequest.createdAt)} from IP {joinRequest.requestIp}</span>
-              {joinRequest.adapterType && <span>adapter: {joinRequest.adapterType}</span>}
+              <span>{timeAgo(joinRequest.createdAt)} 요청 · IP {joinRequest.requestIp}</span>
+              {joinRequest.adapterType && <span>어댑터: {joinRequest.adapterType}</span>}
             </span>
           </span>
         </div>
@@ -554,7 +558,7 @@ function JoinRequestInboxRow({
             onClick={onApprove}
             disabled={isPending}
           >
-            Approve
+            승인
           </Button>
           <Button
             variant="destructive"
@@ -563,7 +567,7 @@ function JoinRequestInboxRow({
             onClick={onReject}
             disabled={isPending}
           >
-            Reject
+            거절
           </Button>
         </div>
       </div>
@@ -574,7 +578,7 @@ function JoinRequestInboxRow({
           onClick={onApprove}
           disabled={isPending}
         >
-          Approve
+            승인
         </Button>
         <Button
           variant="destructive"
@@ -583,7 +587,7 @@ function JoinRequestInboxRow({
           onClick={onReject}
           disabled={isPending}
         >
-          Reject
+            거절
         </Button>
       </div>
     </div>
@@ -611,7 +615,7 @@ export function Inbox() {
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
-        "Inbox",
+        "받은 편지함",
         `${location.pathname}${location.search}${location.hash}`,
         "inbox",
       ),
@@ -625,7 +629,7 @@ export function Inbox() {
   });
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Inbox" }]);
+    setBreadcrumbs([{ label: "받은 편지함" }]);
   }, [setBreadcrumbs]);
 
   useEffect(() => {
@@ -797,7 +801,7 @@ export function Inbox() {
       navigate(`/approvals/${id}?resolved=approved`);
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to approve");
+      setActionError(err instanceof Error ? err.message : "승인하지 못했습니다");
     },
   });
 
@@ -808,7 +812,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.approvals.list(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to reject");
+      setActionError(err instanceof Error ? err.message : "거절하지 못했습니다");
     },
   });
 
@@ -823,7 +827,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to approve join request");
+      setActionError(err instanceof Error ? err.message : "참여 요청을 승인하지 못했습니다");
     },
   });
 
@@ -836,7 +840,7 @@ export function Inbox() {
       queryClient.invalidateQueries({ queryKey: queryKeys.sidebarBadges(selectedCompanyId!) });
     },
     onError: (err) => {
-      setActionError(err instanceof Error ? err.message : "Failed to reject join request");
+      setActionError(err instanceof Error ? err.message : "참여 요청을 거절하지 못했습니다");
     },
   });
 
@@ -858,7 +862,7 @@ export function Inbox() {
         payload,
       });
       if (!("id" in result)) {
-        throw new Error("Retry was skipped because the agent is not currently invokable.");
+        throw new Error("에이전트를 지금 호출할 수 없어 재시도를 건너뛰었습니다.");
       }
       return { newRun: result, originalRun: run };
     },
@@ -905,7 +909,7 @@ export function Inbox() {
       invalidateInboxIssueQueries();
     },
     onError: (err, id) => {
-      setActionError(err instanceof Error ? err.message : "Failed to archive issue");
+      setActionError(err instanceof Error ? err.message : "이슈를 받은 편지함에서 숨기지 못했습니다");
       setArchivingIssueIds((prev) => {
         const next = new Set(prev);
         next.delete(id);
@@ -1173,7 +1177,7 @@ export function Inbox() {
   }, [selectedIndex]);
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={InboxIcon} message="Select a company to view inbox." />;
+    return <EmptyState icon={InboxIcon} message="받은 편지함을 보려면 회사를 선택하세요." />;
   }
 
   const hasRunFailures = failedRuns.length > 0;
@@ -1223,14 +1227,14 @@ export function Inbox() {
             items={[
               {
                 value: "mine",
-                label: "Mine",
+                label: "내 것",
               },
               {
                 value: "recent",
-                label: "Recent",
+                label: "최근",
               },
-              { value: "unread", label: "Unread" },
-              { value: "all", label: "All" },
+              { value: "unread", label: "안 읽음" },
+              { value: "all", label: "전체" },
             ]}
           />
         </Tabs>
@@ -1245,7 +1249,7 @@ export function Inbox() {
               onClick={() => markAllReadMutation.mutate(unreadIssueIds)}
               disabled={markAllReadMutation.isPending}
             >
-              {markAllReadMutation.isPending ? "Marking…" : "Mark all as read"}
+              {markAllReadMutation.isPending ? "처리 중…" : "모두 읽음 처리"}
             </Button>
           )}
         </div>
@@ -1258,15 +1262,15 @@ export function Inbox() {
             onValueChange={(value) => setAllCategoryFilter(value as InboxCategoryFilter)}
           >
             <SelectTrigger className="h-8 w-[170px] text-xs">
-              <SelectValue placeholder="Category" />
+              <SelectValue placeholder="카테고리" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="everything">All categories</SelectItem>
-              <SelectItem value="issues_i_touched">My recent issues</SelectItem>
-              <SelectItem value="join_requests">Join requests</SelectItem>
-              <SelectItem value="approvals">Approvals</SelectItem>
-              <SelectItem value="failed_runs">Failed runs</SelectItem>
-              <SelectItem value="alerts">Alerts</SelectItem>
+              <SelectItem value="everything">전체 카테고리</SelectItem>
+              <SelectItem value="issues_i_touched">내 최근 이슈</SelectItem>
+              <SelectItem value="join_requests">참여 요청</SelectItem>
+              <SelectItem value="approvals">승인</SelectItem>
+              <SelectItem value="failed_runs">실패한 실행</SelectItem>
+              <SelectItem value="alerts">알림</SelectItem>
             </SelectContent>
           </Select>
 
@@ -1276,12 +1280,12 @@ export function Inbox() {
               onValueChange={(value) => setAllApprovalFilter(value as InboxApprovalFilter)}
             >
               <SelectTrigger className="h-8 w-[170px] text-xs">
-                <SelectValue placeholder="Approval status" />
+                <SelectValue placeholder="승인 상태" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All approval statuses</SelectItem>
-                <SelectItem value="actionable">Needs action</SelectItem>
-                <SelectItem value="resolved">Resolved</SelectItem>
+                <SelectItem value="all">모든 승인 상태</SelectItem>
+                <SelectItem value="actionable">조치 필요</SelectItem>
+                <SelectItem value="resolved">해결됨</SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -1300,12 +1304,12 @@ export function Inbox() {
           icon={InboxIcon}
           message={
             tab === "mine"
-              ? "Inbox zero."
+              ? "받은 편지함이 비어 있습니다."
               : tab === "unread"
-              ? "No new inbox items."
+              ? "새 받은 편지함 항목이 없습니다."
               : tab === "recent"
-                ? "No recent inbox items."
-                : "No inbox items match these filters."
+                ? "최근 받은 편지함 항목이 없습니다."
+                : "필터에 맞는 받은 편지함 항목이 없습니다."
           }
         />
       )}
@@ -1338,7 +1342,7 @@ export function Inbox() {
                     <div key="today-divider" className="flex items-center gap-3 px-4 my-2">
                       <div className="flex-1 border-t border-border" />
                       <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                        Earlier
+                        이전 항목
                       </span>
                     </div>,
                   );
@@ -1478,8 +1482,8 @@ export function Inbox() {
                     }
                     mobileMeta={
                       issue.lastExternalCommentAt
-                        ? `commented ${timeAgo(issue.lastExternalCommentAt)}`
-                        : `updated ${timeAgo(issue.updatedAt)}`
+                        ? `${timeAgo(issue.lastExternalCommentAt)} 댓글`
+                        : `${timeAgo(issue.updatedAt)} 업데이트`
                     }
                     unreadState={
                       isUnread ? "visible" : isFading ? "fading" : "hidden"
@@ -1493,8 +1497,8 @@ export function Inbox() {
                     archiveDisabled={isArchiving || archiveIssueMutation.isPending}
                     trailingMeta={
                       issue.lastExternalCommentAt
-                        ? `commented ${timeAgo(issue.lastExternalCommentAt)}`
-                        : `updated ${timeAgo(issue.updatedAt)}`
+                        ? `${timeAgo(issue.lastExternalCommentAt)} 댓글`
+                        : `${timeAgo(issue.updatedAt)} 업데이트`
                     }
                   />
                 );
@@ -1521,7 +1525,7 @@ export function Inbox() {
           {showSeparatorBefore("alerts") && <Separator />}
           <div>
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Alerts
+              알림
             </h3>
             <div className="divide-y divide-border border border-border">
               {showAggregateAgentError && (
@@ -1532,15 +1536,15 @@ export function Inbox() {
                   >
                     <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
                     <span className="text-sm">
-                      <span className="font-medium">{dashboard!.agents.error}</span>{" "}
-                      {dashboard!.agents.error === 1 ? "agent has" : "agents have"} errors
+                      <span className="font-medium">{dashboard!.agents.error}개</span>{" "}
+                      에이전트 오류가 있습니다
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismiss("alert:agent-errors")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label="Dismiss"
+                    aria-label="숨기기"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -1554,16 +1558,16 @@ export function Inbox() {
                   >
                     <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-400" />
                     <span className="text-sm">
-                      Budget at{" "}
+                      이번 달 예산 사용률{" "}
                       <span className="font-medium">{dashboard!.costs.monthUtilizationPercent}%</span>{" "}
-                      utilization this month
+                      도달
                     </span>
                   </Link>
                   <button
                     type="button"
                     onClick={() => dismiss("alert:budget")}
                     className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/alert:opacity-100"
-                    aria-label="Dismiss"
+                    aria-label="숨기기"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>

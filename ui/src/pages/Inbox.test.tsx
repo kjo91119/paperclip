@@ -158,7 +158,7 @@ describe("InboxIssueMetaLeading", () => {
     const statusIcon = container.querySelector('span[class*="border-muted-foreground"]');
     const liveBadge = container.querySelector('span[class*="px-1.5"][class*="bg-muted"]');
     const liveBadgeLabel = Array.from(container.querySelectorAll("span")).find(
-      (node) => node.textContent === "Live" && node.className.includes("text-"),
+      (node) => node.textContent?.trim() === "실시간" && node.className.includes("text-"),
     );
     const liveDot = container.querySelector('span[class*="bg-muted-foreground/70"]');
     const pulseRing = container.querySelector('span[class*="animate-pulse"]');

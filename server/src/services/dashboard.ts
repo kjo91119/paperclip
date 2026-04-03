@@ -1,8 +1,11 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, issues } from "@paperclipai/db";
+import { ACTIONABLE_APPROVAL_STATUSES } from "@paperclipai/shared";
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
+
+const actionableApprovalStatuses = [...ACTIONABLE_APPROVAL_STATUSES];
 
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
@@ -31,7 +34,12 @@ export function dashboardService(db: Db) {
       const pendingApprovals = await db
         .select({ count: sql<number>`count(*)` })
         .from(approvals)
-        .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
+        .where(
+          and(
+            eq(approvals.companyId, companyId),
+            inArray(approvals.status, actionableApprovalStatuses),
+          ),
+        )
         .then((rows) => Number(rows[0]?.count ?? 0));
 
       const agentCounts: Record<string, number> = {

@@ -207,6 +207,11 @@ export const APPROVAL_STATUSES = [
 ] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
+export const ACTIONABLE_APPROVAL_STATUSES = [
+  "pending",
+  "revision_requested",
+] as const;
+
 export const SECRET_PROVIDERS = [
   "local_encrypted",
   "aws_secrets_manager",

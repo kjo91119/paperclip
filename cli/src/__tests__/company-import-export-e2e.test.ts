@@ -14,6 +14,23 @@ import { createStoredZipArchive } from "./helpers/zip.js";
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const cliWorkspaceDir = path.join(repoRoot, "cli");
+const tsxCliPath = path.join(cliWorkspaceDir, "node_modules", "tsx", "dist", "cli.mjs");
+
+function paperclipSourceCommand(args: string[]) {
+  return {
+    command: process.execPath,
+    args: [tsxCliPath, "cli/src/index.ts", ...args],
+  };
+}
+
+function paperclipPackagedCommand(args: string[]) {
+  return {
+    command: "pnpm",
+    args: ["--silent", "paperclipai", ...args],
+  };
+}
 
 async function getAvailablePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -148,6 +165,28 @@ function createCliEnv() {
   return env;
 }
 
+async function buildPackagedCli() {
+  await execFileAsync("pnpm", ["--dir", "cli", "build"], {
+    cwd: repoRoot,
+    env: createCliEnv(),
+    maxBuffer: 10 * 1024 * 1024,
+  });
+}
+
+async function verifyPackagedCliBinary() {
+  const cli = paperclipPackagedCommand(["--help"]);
+  const result = await execFileAsync(cli.command, cli.args, {
+    cwd: repoRoot,
+    env: createCliEnv(),
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  if (!result.stdout.includes("Usage: paperclipai")) {
+    throw new Error(
+      `Packaged paperclipai binary did not respond with help output.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
+}
+
 function collectTextFiles(root: string, current: string, files: Record<string, string>) {
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     const absolutePath = path.join(current, entry.name);
@@ -184,10 +223,17 @@ async function api<T>(baseUrl: string, pathname: string, init?: RequestInit): Pr
 }
 
 async function runCliJson<T>(args: string[], opts: { apiBase: string; configPath: string }) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  const cli = paperclipPackagedCommand([
+    ...args,
+    "--api-base",
+    opts.apiBase,
+    "--config",
+    opts.configPath,
+    "--json",
+  ]);
   const result = await execFileAsync(
-    "pnpm",
-    ["--silent", "paperclipai", ...args, "--api-base", opts.apiBase, "--config", opts.configPath, "--json"],
+    cli.command,
+    cli.args,
     {
       cwd: repoRoot,
       env: createCliEnv(),
@@ -206,9 +252,10 @@ async function waitForServer(
   apiBase: string,
   child: ServerProcess,
   output: { stdout: string[]; stderr: string[] },
+  timeoutMs = 60_000,
 ) {
   const startedAt = Date.now();
-  while (Date.now() - startedAt < 30_000) {
+  while (Date.now() - startedAt < timeoutMs) {
     if (child.exitCode !== null) {
       throw new Error(
         `paperclipai run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
@@ -243,23 +290,24 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     configPath = path.join(tempRoot, "config", "config.json");
     exportDir = path.join(tempRoot, "exported-company");
 
+    await buildPackagedCli();
+    await verifyPackagedCliBinary();
+
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-company-cli-db-");
 
     const port = await getAvailablePort();
     writeTestConfig(configPath, tempRoot, port, tempDb.connectionString);
     apiBase = `http://127.0.0.1:${port}`;
 
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
     const output = { stdout: [] as string[], stderr: [] as string[] };
-    const child = spawn(
-      "pnpm",
-      ["paperclipai", "run", "--config", configPath],
-      {
-        cwd: repoRoot,
-        env: createServerEnv(configPath, port, tempDb.connectionString),
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    // Keep server startup on the source entrypoint in the monorepo test harness,
+    // but exercise the packaged CLI binary for the import/export commands below.
+    const cli = paperclipSourceCommand(["run", "--config", configPath]);
+    const child = spawn(cli.command, cli.args, {
+      cwd: repoRoot,
+      env: createServerEnv(configPath, port, tempDb.connectionString),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     serverProcess = child;
     child.stdout?.on("data", (chunk) => {
       output.stdout.push(String(chunk));
@@ -268,8 +316,8 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       output.stderr.push(String(chunk));
     });
 
-    await waitForServer(apiBase, child, output);
-  }, 60_000);
+    await waitForServer(apiBase, child, output, 90_000);
+  }, 120_000);
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
@@ -498,5 +546,5 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     expect(importedFromZip.company.action).toBe("created");
     expect(importedFromZip.agents.some((agent) => agent.action === "created")).toBe(true);
-  }, 60_000);
+  }, 120_000);
 });

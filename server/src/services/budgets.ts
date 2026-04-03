@@ -9,6 +9,7 @@ import {
   costEvents,
   projects,
 } from "@paperclipai/db";
+import { ACTIONABLE_APPROVAL_STATUSES } from "@paperclipai/shared";
 import type {
   BudgetIncident,
   BudgetIncidentResolutionInput,
@@ -33,6 +34,7 @@ type ScopeRecord = {
 
 type PolicyRow = typeof budgetPolicies.$inferSelect;
 type IncidentRow = typeof budgetIncidents.$inferSelect;
+const actionableApprovalStatusSet = new Set<string>(ACTIONABLE_APPROVAL_STATUSES);
 
 export type BudgetEnforcementScope = {
   companyId: string;
@@ -640,7 +642,10 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         activeIncidents,
         pausedAgentCount: policies.filter((policy) => policy.scopeType === "agent" && policy.paused).length,
         pausedProjectCount: policies.filter((policy) => policy.scopeType === "project" && policy.paused).length,
-        pendingApprovalCount: activeIncidents.filter((incident) => incident.approvalStatus === "pending").length,
+        pendingApprovalCount: activeIncidents.filter(
+          (incident) =>
+            incident.approvalStatus !== null && actionableApprovalStatusSet.has(incident.approvalStatus),
+        ).length,
       };
     },
 

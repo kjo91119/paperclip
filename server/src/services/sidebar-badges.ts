@@ -1,9 +1,12 @@
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
-import type { SidebarBadges } from "@paperclipai/shared";
+import {
+  ACTIONABLE_APPROVAL_STATUSES,
+  type SidebarBadges,
+} from "@paperclipai/shared";
 
-const ACTIONABLE_APPROVAL_STATUSES = ["pending", "revision_requested"];
+const actionableApprovalStatuses = [...ACTIONABLE_APPROVAL_STATUSES];
 const FAILED_HEARTBEAT_STATUSES = ["failed", "timed_out"];
 
 export function sidebarBadgeService(db: Db) {
@@ -18,7 +21,7 @@ export function sidebarBadgeService(db: Db) {
         .where(
           and(
             eq(approvals.companyId, companyId),
-            inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
+            inArray(approvals.status, actionableApprovalStatuses),
           ),
         )
         .then((rows) => Number(rows[0]?.count ?? 0));

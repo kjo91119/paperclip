@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { ACTIONABLE_APPROVAL_STATUSES } from "@paperclipai/shared";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
@@ -14,6 +15,7 @@ import { ApprovalCard } from "../components/ApprovalCard";
 import { PageSkeleton } from "../components/PageSkeleton";
 
 type StatusFilter = "pending" | "all";
+const actionableApprovalStatusSet = new Set<string>(ACTIONABLE_APPROVAL_STATUSES);
 
 export function Approvals() {
   const { selectedCompanyId } = useCompany();
@@ -65,14 +67,10 @@ export function Approvals() {
   });
 
   const filtered = (data ?? [])
-    .filter(
-      (a) => statusFilter === "all" || a.status === "pending" || a.status === "revision_requested",
-    )
+    .filter((a) => statusFilter === "all" || actionableApprovalStatusSet.has(a.status))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  const pendingCount = (data ?? []).filter(
-    (a) => a.status === "pending" || a.status === "revision_requested",
-  ).length;
+  const pendingCount = (data ?? []).filter((a) => actionableApprovalStatusSet.has(a.status)).length;
 
   if (!selectedCompanyId) {
     return <p className="text-sm text-muted-foreground">먼저 회사를 선택하세요.</p>;
