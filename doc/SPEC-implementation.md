@@ -32,14 +32,14 @@ These decisions close open questions from `SPEC.md` for V1.
 |---|---|
 | Tenancy | Single-tenant deployment, multi-company data model |
 | Company model | Company is first-order; all business entities are company-scoped |
-| Board | Single human board operator per deployment |
+| Board | Board-level control stays centralized, but current code also supports authenticated users, company memberships, join requests, and instance-admin flows |
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
 | Visibility | Full visibility to board and all agents in same company |
 | Communication | Tasks + comments only (no separate chat system) |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | No automatic reassignment; work recovery stays manual/explicit |
-| Agent adapters | Built-in `process` and `http` adapters |
-| Auth | Mode-dependent human auth (`local_trusted` implicit board in current code; authenticated mode uses sessions), API keys for agents |
+| Agent adapters | Built-in baseline is `process` + `http`; current code also ships local/gateway adapters such as `claude_local`, `codex_local`, `gemini_local`, `opencode_local`, `pi_local`, `cursor`, `openclaw_gateway`, and `hermes_local` |
+| Auth | Mode-dependent human auth (`local_trusted` implicit board; authenticated mode uses sessions, company memberships, join requests, and instance-admin roles), API keys/JWT for agents |
 | Budget period | Monthly UTC calendar window |
 | Budget enforcement | Soft alerts + hard limit auto-pause |
 | Deployment modes | Canonical model is `local_trusted` + `authenticated` with `private/public` exposure policy (see `doc/DEPLOYMENT-MODES.md`) |
@@ -133,10 +133,10 @@ Invariant: every business record belongs to exactly one company.
 - `name` text not null
 - `role` text not null
 - `title` text null
-- `status` enum: `active | paused | idle | running | error | terminated`
+- `status` enum: `active | paused | idle | running | error | pending_approval | terminated`
 - `reports_to` uuid fk `agents.id` null
 - `capabilities` text null
-- `adapter_type` enum: `process | http`
+- `adapter_type` enum: `process | http | claude_local | codex_local | gemini_local | opencode_local | pi_local | cursor | openclaw_gateway | hermes_local`
 - `adapter_config` jsonb not null
 - `context_mode` enum: `thin | fat` default `thin`
 - `budget_monthly_cents` int not null default 0
@@ -256,14 +256,19 @@ Invariant: each event must attach to agent and company; rollups are aggregation,
 
 - `id` uuid pk
 - `company_id` uuid fk not null
-- `type` enum: `hire_agent | approve_ceo_strategy`
+- `type` enum: `hire_agent | approve_ceo_strategy | budget_override_required`
 - `requested_by_agent_id` uuid fk `agents.id` null
 - `requested_by_user_id` uuid fk `users.id` null
-- `status` enum: `pending | approved | rejected | cancelled`
+- `status` enum: `pending | revision_requested | approved | rejected | cancelled`
 - `payload` jsonb not null
 - `decision_note` text null
 - `decided_by_user_id` uuid fk `users.id` null
 - `decided_at` timestamptz null
+
+Operational note:
+
+- standard board/operator approval actions are `approve`, `reject`, `request-revision`, and requester `resubmit`
+- `cancelled` remains part of the stored status model but is not the normal board UI/API decision path in current V1 code
 
 ## 7.11 `activity_log`
 
@@ -356,7 +361,39 @@ Operational policy:
   - `company_id` uuid fk not null
   - `issue_id` uuid fk not null
   - `document_id` uuid fk not null
-  - `key` text not null (`plan`, `design`, `notes`, etc.)
+  - `key` text not null (lowercase slug-style key such as `plan`, `brief_v1`, `launch-plan`)
+
+## 7.16 `issue_work_products`
+
+- `issue_work_products` stores linked outputs/artifacts for an issue:
+  - `id` uuid pk
+  - `company_id` uuid fk not null
+  - `project_id` uuid fk null
+  - `issue_id` uuid fk not null
+  - `execution_workspace_id` uuid fk null
+  - `runtime_service_id` uuid fk null
+  - `type` text not null
+  - `provider` text not null
+  - `external_id` text null
+  - `title` text not null
+  - `url` text null
+  - `status` text not null
+  - `review_state` text not null default `none`
+  - `is_primary` boolean not null default `false`
+  - `health_status` text not null default `unknown`
+  - `summary` text null
+  - `metadata` jsonb null
+  - `created_by_run_id` uuid fk null
+
+## 7.17 `approval_comments`
+
+- `approval_comments` stores threaded review/audit discussion on approvals:
+  - `id` uuid pk
+  - `company_id` uuid fk not null
+  - `approval_id` uuid fk not null
+  - `author_agent_id` uuid fk null
+  - `author_user_id` uuid/text fk null
+  - `body` text not null
 
 ## 8. State Machines
 
@@ -384,6 +421,12 @@ Allowed transitions:
 - `blocked -> todo | in_progress | cancelled`
 - terminal: `done`, `cancelled`
 
+Implementation note:
+
+- these transitions describe the intended operating model
+- current code primarily enforces known status values plus selected invariants such as `in_progress` requiring an assignee and status timestamps
+- richer review semantics and evidence-gated `done` handling remain partly operator policy today
+
 Side effects:
 
 - entering `in_progress` sets `started_at` if null
@@ -392,15 +435,19 @@ Side effects:
 
 ## 8.3 Approval Status
 
-- `pending -> approved | rejected | cancelled`
-- terminal after decision
+- `pending -> revision_requested | approved | rejected | cancelled`
+- `revision_requested -> pending` via requester resubmit
+- `revision_requested -> approved | rejected`
+- terminal after final decision; `cancelled` remains reserved for non-standard/admin flows
 
 ## 9. Auth and Permissions
 
 ## 9.1 Board Auth
 
-- Session-based auth for human operator
-- Board has full read/write across all companies in deployment
+- `local_trusted` mode uses an implicit local board user
+- authenticated mode uses session-backed users with company memberships; instance admins can operate across companies
+- invite/join-request flows can grant company membership before a human acts in board context
+- Board has full read/write across companies the actor is authorized for
 - Every board mutation writes to `activity_log`
 
 ## 9.2 Agent Auth
@@ -511,9 +558,12 @@ Server behavior:
 ## 10.6 Approvals
 
 - `GET /companies/:companyId/approvals?status=pending`
+- `GET /approvals/:approvalId`
 - `POST /companies/:companyId/approvals`
 - `POST /approvals/:approvalId/approve`
 - `POST /approvals/:approvalId/reject`
+- `POST /approvals/:approvalId/request-revision`
+- `POST /approvals/:approvalId/resubmit`
 
 ## 10.7 Cost and Budgets
 
@@ -639,14 +689,20 @@ Board can bypass request flow and create agents directly via UI; direct create i
 
 Before first strategy approval, CEO may only draft tasks, not transition them to active execution states.
 
-## 12.3 Board Override
+## 12.3 Budget Override Approval
+
+1. Budget enforcement may create `approval(type=budget_override_required, status=pending)` for a hard-stop incident.
+2. Board may approve by raising the relevant budget and resuming work, reject the override, or request revision/context.
+3. The approval and budget incident remain linked through activity and audit records.
+
+## 12.4 Board Override
 
 Board can at any time:
 
 - pause/resume/terminate any agent
 - reassign or cancel any task
 - edit budgets and limits
-- approve/reject/cancel pending approvals
+- approve/reject/request revision on approvals
 
 ## 13. Cost and Budget System
 
@@ -665,6 +721,10 @@ Board can at any time:
   - emit high-priority activity event
 
 Board may override by raising budget or explicitly resuming agent.
+
+When a hard-stop requires operator intervention, the server may also open
+`approval(type=budget_override_required)` so the budget incident has a
+durable approval record alongside the pause.
 
 ## 13.3 Cost Event Ingestion
 
