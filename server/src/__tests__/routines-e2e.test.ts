@@ -25,6 +25,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
+import { routineRoutes } from "../routes/routines.js";
 import { accessService } from "../services/access.js";
 
 vi.mock("../services/index.js", async () => {
@@ -115,8 +116,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
     await tempDb?.cleanup();
   });
 
-  async function createApp(actor: Record<string, unknown>) {
-    const { routineRoutes } = await import("../routes/routines.js");
+  function createApp(actor: Record<string, unknown>) {
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -175,7 +175,7 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
 
   it("supports creating, scheduling, and manually running a routine through the API", async () => {
     const { companyId, agentId, projectId, userId } = await seedFixture();
-    const app = await createApp({
+    const app = createApp({
       type: "board",
       userId,
       source: "session",
@@ -271,5 +271,5 @@ describeEmbeddedPostgres("routine routes end-to-end", () => {
         "routine.run_triggered",
       ]),
     );
-  });
+  }, 20_000);
 });

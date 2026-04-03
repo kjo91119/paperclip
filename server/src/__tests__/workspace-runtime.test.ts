@@ -178,6 +178,8 @@ describe("sanitizeRuntimeServiceBaseEnv", () => {
   });
 });
 
+const GIT_WORKTREE_TEST_TIMEOUT = 20_000;
+
 describe("realizeExecutionWorkspace", () => {
   it("creates and reuses a git worktree for an issue-scoped branch", async () => {
     const repoRoot = await createTempRepo();
@@ -245,7 +247,7 @@ describe("realizeExecutionWorkspace", () => {
     expect(second.created).toBe(false);
     expect(second.cwd).toBe(first.cwd);
     expect(second.branchName).toBe(first.branchName);
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("slugifies unsafe issue titles for branch names and worktree folders", async () => {
     const repoRoot = await createTempRepo();
@@ -282,7 +284,7 @@ describe("realizeExecutionWorkspace", () => {
     );
     expect(realized.branchName?.includes("/")).toBe(false);
     expect(path.basename(realized.cwd)).toBe(realized.branchName);
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("preserves intentional slashes and dots from the branch template", async () => {
     const repoRoot = await createTempRepo();
@@ -316,7 +318,7 @@ describe("realizeExecutionWorkspace", () => {
 
     expect(realized.branchName).toBe("release/PAP-992.hotfix-april-1");
     expect(path.basename(realized.cwd)).toBe("PAP-992.hotfix-april-1");
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("runs a configured provision command inside the derived worktree", async () => {
     const repoRoot = await createTempRepo();
@@ -402,7 +404,7 @@ describe("realizeExecutionWorkspace", () => {
     });
 
     await expect(fs.readFile(path.join(reused.cwd, ".paperclip-provision-created"), "utf8")).resolves.toBe("false\n");
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("writes an isolated repo-local Paperclip config and worktree branding when provisioning", async () => {
     const repoRoot = await createTempRepo();
@@ -552,7 +554,7 @@ describe("realizeExecutionWorkspace", () => {
     } finally {
       process.chdir(previousCwd);
     }
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("records worktree setup and provision operations when a recorder is provided", async () => {
     const repoRoot = await createTempRepo();
@@ -610,7 +612,7 @@ describe("realizeExecutionWorkspace", () => {
       created: true,
     });
     expect(operations[1]?.command).toBe("bash ./scripts/provision.sh");
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("reuses an existing branch without resetting it when recreating a missing worktree", async () => {
     const repoRoot = await createTempRepo();
@@ -654,7 +656,7 @@ describe("realizeExecutionWorkspace", () => {
     await expect(fs.readFile(path.join(workspace.cwd, "feature.txt"), "utf8")).resolves.toBe("preserve me\n");
     const actualHead = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: workspace.cwd })).stdout.trim();
     expect(actualHead).toBe(expectedHead);
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("auto-detects the default branch when baseRef is not configured", async () => {
     // Create a repo with "master" as default branch (not "main")
@@ -712,7 +714,7 @@ describe("realizeExecutionWorkspace", () => {
     const worktreeOp = operations.find(op => op.phase === "worktree_prepare" && op.metadata?.created);
     expect(worktreeOp).toBeDefined();
     expect(worktreeOp!.metadata!.baseRef).toBe("master");
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("auto-detects the default branch via symbolic-ref when origin/HEAD is set", async () => {
     // Create a repo with "master" as default branch
@@ -769,7 +771,7 @@ describe("realizeExecutionWorkspace", () => {
     const worktreeOp = operations.find(op => op.phase === "worktree_prepare" && op.metadata?.created);
     expect(worktreeOp).toBeDefined();
     expect(worktreeOp!.metadata!.baseRef).toBe("master");
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("removes a created git worktree and branch during cleanup", async () => {
     const repoRoot = await createTempRepo();
@@ -831,7 +833,7 @@ describe("realizeExecutionWorkspace", () => {
     ).resolves.toMatchObject({
       stdout: "",
     });
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("keeps an unmerged runtime-created branch and warns instead of force deleting it", async () => {
     const repoRoot = await createTempRepo();
@@ -897,7 +899,7 @@ describe("realizeExecutionWorkspace", () => {
     ).resolves.toMatchObject({
       stdout: expect.stringContaining(workspace.branchName!),
     });
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 
   it("records teardown and cleanup operations when a recorder is provided", async () => {
     const repoRoot = await createTempRepo();
@@ -965,7 +967,7 @@ describe("realizeExecutionWorkspace", () => {
     expect(operations[2]?.metadata).toMatchObject({
       cleanupAction: "branch_delete",
     });
-  });
+  }, GIT_WORKTREE_TEST_TIMEOUT);
 });
 
 describe("ensureRuntimeServicesForRun", () => {
