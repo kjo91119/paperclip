@@ -14,6 +14,7 @@ export const READ_ITEMS_KEY = "paperclip:inbox:read-items";
 export const INBOX_LAST_TAB_KEY = "paperclip:inbox:last-tab";
 export type InboxTab = "mine" | "recent" | "unread" | "all";
 export type InboxApprovalFilter = "all" | "actionable" | "resolved";
+export type InboxIssueSignal = "reply" | "started" | "review" | "blocked" | "updated";
 export type InboxWorkItem =
   | {
       kind: "issue";
@@ -43,6 +44,15 @@ export interface InboxBadgeData {
   joinRequests: number;
   mineIssues: number;
   alerts: number;
+}
+
+export interface InboxIssueSignalCounts {
+  reply: number;
+  started: number;
+  review: number;
+  blocked: number;
+  updated: number;
+  total: number;
 }
 
 export function loadDismissedInboxItems(): Set<string> {
@@ -163,6 +173,39 @@ export function getRecentTouchedIssues(issues: Issue[]): Issue[] {
 
 export function getUnreadTouchedIssues(issues: Issue[]): Issue[] {
   return issues.filter((issue) => issue.isUnreadForMe);
+}
+
+export function getInboxIssueSignal(issue: Issue): InboxIssueSignal {
+  if (issue.lastExternalCommentAt && issue.isUnreadForMe) return "reply";
+  if (issue.status === "in_review") return "review";
+  if (issue.status === "blocked") return "blocked";
+  if (issue.status === "in_progress") return "started";
+  return "updated";
+}
+
+export function getInboxIssueSignalLabel(signal: InboxIssueSignal): string {
+  if (signal === "reply") return "새 답변";
+  if (signal === "started") return "작업 시작";
+  if (signal === "review") return "검토 요청";
+  if (signal === "blocked") return "막힘";
+  return "업데이트";
+}
+
+export function computeInboxIssueSignalCounts(issues: Issue[]): InboxIssueSignalCounts {
+  const counts: InboxIssueSignalCounts = {
+    reply: 0,
+    started: 0,
+    review: 0,
+    blocked: 0,
+    updated: 0,
+    total: issues.length,
+  };
+
+  for (const issue of issues) {
+    counts[getInboxIssueSignal(issue)] += 1;
+  }
+
+  return counts;
 }
 
 export function getApprovalsForTab(

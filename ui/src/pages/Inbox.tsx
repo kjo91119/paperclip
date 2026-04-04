@@ -45,7 +45,10 @@ import { PageTabBar } from "../components/PageTabBar";
 import type { Approval, HeartbeatRun, Issue, JoinRequest } from "@paperclipai/shared";
 import {
   ACTIONABLE_APPROVAL_STATUSES,
+  computeInboxIssueSignalCounts,
   getApprovalsForTab,
+  getInboxIssueSignal,
+  getInboxIssueSignalLabel,
   getInboxWorkItems,
   getInboxKeyboardSelectionIndex,
   getLatestFailedRunsByAgent,
@@ -55,6 +58,7 @@ import {
   InboxApprovalFilter,
   saveLastInboxTab,
   shouldShowInboxSection,
+  type InboxIssueSignal,
   type InboxTab,
   type InboxWorkItem,
 } from "../lib/inbox";
@@ -163,6 +167,54 @@ export function InboxIssueMetaLeading({
         </span>
       )}
     </>
+  );
+}
+
+function inboxIssueSignalClass(signal: InboxIssueSignal, selected: boolean): string {
+  if (selected) return "border-muted-foreground/30 bg-muted text-muted-foreground";
+  if (signal === "reply") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+  if (signal === "review") return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  if (signal === "blocked") return "border-red-500/30 bg-red-500/10 text-red-300";
+  if (signal === "started") return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+  return "border-border bg-muted/40 text-muted-foreground";
+}
+
+function InboxIssueSignalBadge({
+  signal,
+  selected = false,
+}: {
+  signal: InboxIssueSignal;
+  selected?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        inboxIssueSignalClass(signal, selected),
+      )}
+    >
+      {getInboxIssueSignalLabel(signal)}
+    </span>
+  );
+}
+
+function InboxIssueSummaryChip({
+  signal,
+  count,
+}: {
+  signal: InboxIssueSignal;
+  count: number;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium",
+        inboxIssueSignalClass(signal, false),
+      )}
+    >
+      <span>{getInboxIssueSignalLabel(signal)}</span>
+      <span className="opacity-80">{count}</span>
+    </span>
   );
 }
 
@@ -722,6 +774,21 @@ export function Inbox() {
       return touchedIssues;
     },
     [tab, mineIssues, touchedIssues, unreadTouchedIssues],
+  );
+  const issueSignalCounts = useMemo(
+    () => computeInboxIssueSignalCounts(issuesToRender),
+    [issuesToRender],
+  );
+  const issueSummaryItems = useMemo(
+    () =>
+      ([
+        ["reply", issueSignalCounts.reply],
+        ["review", issueSignalCounts.review],
+        ["blocked", issueSignalCounts.blocked],
+        ["started", issueSignalCounts.started],
+        ["updated", issueSignalCounts.updated],
+      ] as const).filter(([, count]) => count > 0),
+    [issueSignalCounts],
   );
 
   const agentById = useMemo(() => {
@@ -1292,6 +1359,19 @@ export function Inbox() {
         </div>
       )}
 
+      {issueSummaryItems.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-3">
+          <span className="text-xs font-medium text-muted-foreground">이슈 업데이트 요약</span>
+          {issueSummaryItems.map(([signal, count]) => (
+            <InboxIssueSummaryChip
+              key={signal}
+              signal={signal}
+              count={count}
+            />
+          ))}
+        </div>
+      )}
+
       {approvalsError && <p className="text-sm text-destructive">{approvalsError.message}</p>}
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
 
@@ -1459,6 +1539,10 @@ export function Inbox() {
                 }
 
                 const issue = item.issue;
+                const issueSignal = getInboxIssueSignal(issue);
+                const issueSignalLabel = getInboxIssueSignalLabel(issueSignal);
+                const issueActorName = agentName(issue.assigneeAgentId);
+                const issueActivityTime = issue.lastExternalCommentAt ?? issue.updatedAt;
                 const isUnread = issue.isUnreadForMe && !fadingOutIssues.has(issue.id);
                 const isFading = fadingOutIssues.has(issue.id);
                 const isArchiving = archivingIssueIds.has(issue.id);
@@ -1480,10 +1564,25 @@ export function Inbox() {
                         isLive={liveIssueIds.has(issue.id)}
                       />
                     }
+                    desktopTrailing={
+                      <>
+                        <InboxIssueSignalBadge signal={issueSignal} selected={isSelected} />
+                        {issueActorName ? (
+                          <span
+                            className={cn(
+                              "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                              isSelected
+                                ? "border-muted-foreground/30 bg-muted text-muted-foreground"
+                                : "border-border bg-background text-foreground",
+                            )}
+                          >
+                            {issueActorName}
+                          </span>
+                        ) : null}
+                      </>
+                    }
                     mobileMeta={
-                      issue.lastExternalCommentAt
-                        ? `${timeAgo(issue.lastExternalCommentAt)} 댓글`
-                        : `${timeAgo(issue.updatedAt)} 업데이트`
+                      `${issueSignalLabel} · ${timeAgo(issueActivityTime)}`
                     }
                     unreadState={
                       isUnread ? "visible" : isFading ? "fading" : "hidden"
@@ -1496,9 +1595,7 @@ export function Inbox() {
                     }
                     archiveDisabled={isArchiving || archiveIssueMutation.isPending}
                     trailingMeta={
-                      issue.lastExternalCommentAt
-                        ? `${timeAgo(issue.lastExternalCommentAt)} 댓글`
-                        : `${timeAgo(issue.updatedAt)} 업데이트`
+                      timeAgo(issueActivityTime)
                     }
                   />
                 );

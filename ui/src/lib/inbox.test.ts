@@ -3,8 +3,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Approval, DashboardSummary, HeartbeatRun, Issue, JoinRequest } from "@paperclipai/shared";
 import {
+  computeInboxIssueSignalCounts,
   computeInboxBadgeData,
   getApprovalsForTab,
+  getInboxIssueSignal,
+  getInboxIssueSignalLabel,
   getInboxWorkItems,
   getInboxKeyboardSelectionIndex,
   getRecentTouchedIssues,
@@ -252,6 +255,66 @@ describe("inbox helpers", () => {
 
     expect(getUnreadTouchedIssues(issues).map((issue) => issue.id)).toEqual(["1"]);
     expect(issues).toHaveLength(2);
+  });
+
+  it("classifies unread commented issues as replies before status-based updates", () => {
+    const issue = makeIssue("reply", true);
+    issue.status = "blocked";
+
+    expect(getInboxIssueSignal(issue)).toBe("reply");
+    expect(getInboxIssueSignalLabel("reply")).toBe("새 답변");
+  });
+
+  it("classifies started, review, blocked, and generic updates distinctly", () => {
+    const started = makeIssue("started", false);
+    started.status = "in_progress";
+    started.lastExternalCommentAt = null;
+
+    const review = makeIssue("review", false);
+    review.status = "in_review";
+    review.lastExternalCommentAt = null;
+
+    const blocked = makeIssue("blocked", false);
+    blocked.status = "blocked";
+    blocked.lastExternalCommentAt = null;
+
+    const updated = makeIssue("updated", false);
+    updated.status = "todo";
+    updated.lastExternalCommentAt = null;
+
+    expect(getInboxIssueSignal(started)).toBe("started");
+    expect(getInboxIssueSignal(review)).toBe("review");
+    expect(getInboxIssueSignal(blocked)).toBe("blocked");
+    expect(getInboxIssueSignal(updated)).toBe("updated");
+  });
+
+  it("computes inbox issue signal counts for summary chips", () => {
+    const reply = makeIssue("reply", true);
+
+    const started = makeIssue("started", false);
+    started.status = "in_progress";
+    started.lastExternalCommentAt = null;
+
+    const review = makeIssue("review", false);
+    review.status = "in_review";
+    review.lastExternalCommentAt = null;
+
+    const blocked = makeIssue("blocked", false);
+    blocked.status = "blocked";
+    blocked.lastExternalCommentAt = null;
+
+    const updated = makeIssue("updated", false);
+    updated.status = "todo";
+    updated.lastExternalCommentAt = null;
+
+    expect(computeInboxIssueSignalCounts([reply, started, review, blocked, updated])).toEqual({
+      reply: 1,
+      started: 1,
+      review: 1,
+      blocked: 1,
+      updated: 1,
+      total: 5,
+    });
   });
 
   it("shows recent approvals in updated order and unread approvals as actionable only", () => {
