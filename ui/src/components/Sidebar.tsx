@@ -3,6 +3,7 @@ import {
   CircleDot,
   Target,
   LayoutDashboard,
+  PanelsTopLeft,
   DollarSign,
   History,
   Search,
@@ -80,6 +81,7 @@ export function Sidebar() {
             <span className="truncate">새 이슈</span>
           </button>
           <SidebarNavItem to="/dashboard" label="대시보드" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/office" label="오피스" icon={PanelsTopLeft} />
           <SidebarNavItem
             to="/inbox"
             label="받은 편지함"

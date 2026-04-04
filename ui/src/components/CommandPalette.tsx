@@ -23,6 +23,7 @@ import {
   Hexagon,
   Target,
   LayoutDashboard,
+  PanelsTopLeft,
   Inbox,
   DollarSign,
   History,
@@ -145,6 +146,10 @@ export function CommandPalette() {
           <CommandItem onSelect={() => go("/dashboard")}>
             <LayoutDashboard className="mr-2 h-4 w-4" />
             Dashboard
+          </CommandItem>
+          <CommandItem onSelect={() => go("/office")}>
+            <PanelsTopLeft className="mr-2 h-4 w-4" />
+            Office
           </CommandItem>
           <CommandItem onSelect={() => go("/inbox")}>
             <Inbox className="mr-2 h-4 w-4" />

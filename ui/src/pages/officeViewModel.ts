@@ -1,0 +1,255 @@
+import type { Agent, Issue } from "@paperclipai/shared";
+import type { LiveRunForIssue } from "../api/heartbeats";
+
+export type OfficeZoneId = "command" | "desks" | "review" | "approval" | "recovery" | "lounge";
+
+export interface OfficePoint {
+  x: number;
+  y: number;
+}
+
+export interface OfficeAgentState {
+  agent: Agent;
+  issue: Issue | null;
+  liveRun: LiveRunForIssue | null;
+  zoneId: OfficeZoneId;
+  position: OfficePoint;
+  motion: "float" | "walk" | "alert";
+}
+
+export type OfficeViewGateState =
+  | "needs_company_onboarding"
+  | "needs_company_selection"
+  | "loading"
+  | "error"
+  | "empty_agents"
+  | "ready";
+
+const ROLE_WEIGHT: Record<string, number> = {
+  ceo: 0,
+  cto: 1,
+  cmo: 2,
+  cfo: 3,
+  pm: 4,
+  engineer: 5,
+  designer: 6,
+  qa: 7,
+  devops: 8,
+  researcher: 9,
+  general: 10,
+};
+
+const ISSUE_STATUS_WEIGHT: Record<string, number> = {
+  in_progress: 0,
+  blocked: 1,
+  in_review: 2,
+  todo: 3,
+  backlog: 4,
+  done: 5,
+  cancelled: 6,
+};
+
+const COMMAND_PATHS: OfficePoint[][] = [
+  [
+    { x: 44, y: 24 },
+    { x: 50, y: 20 },
+    { x: 57, y: 24 },
+    { x: 60, y: 31 },
+    { x: 53, y: 35 },
+    { x: 46, y: 31 },
+  ],
+  [
+    { x: 40, y: 30 },
+    { x: 45, y: 23 },
+    { x: 53, y: 21 },
+    { x: 58, y: 27 },
+    { x: 55, y: 34 },
+    { x: 46, y: 35 },
+  ],
+  [
+    { x: 48, y: 36 },
+    { x: 42, y: 30 },
+    { x: 47, y: 22 },
+    { x: 57, y: 22 },
+    { x: 62, y: 31 },
+    { x: 56, y: 37 },
+  ],
+];
+
+const DESK_POINTS: OfficePoint[] = [
+  { x: 24, y: 35 },
+  { x: 34, y: 35 },
+  { x: 72, y: 35 },
+  { x: 82, y: 35 },
+  { x: 24, y: 61 },
+  { x: 34, y: 61 },
+  { x: 72, y: 61 },
+  { x: 82, y: 61 },
+];
+
+const REVIEW_POINTS: OfficePoint[] = [
+  { x: 71, y: 78 },
+  { x: 79, y: 78 },
+  { x: 87, y: 78 },
+];
+
+const APPROVAL_POINTS: OfficePoint[] = [
+  { x: 83, y: 16 },
+  { x: 90, y: 22 },
+  { x: 86, y: 29 },
+];
+
+const RECOVERY_POINTS: OfficePoint[] = [
+  { x: 16, y: 16 },
+  { x: 10, y: 24 },
+  { x: 17, y: 30 },
+];
+
+const LOUNGE_POINTS: OfficePoint[] = [
+  { x: 15, y: 80 },
+  { x: 24, y: 83 },
+  { x: 34, y: 79 },
+  { x: 20, y: 69 },
+];
+
+function issueWeight(issue: Issue): number {
+  return ISSUE_STATUS_WEIGHT[issue.status] ?? 99;
+}
+
+function compareIssues(a: Issue, b: Issue): number {
+  const statusDiff = issueWeight(a) - issueWeight(b);
+  if (statusDiff !== 0) return statusDiff;
+  return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+}
+
+function sortedAgents(agents: Agent[]): Agent[] {
+  return [...agents].sort((a, b) => {
+    const roleDiff = (ROLE_WEIGHT[a.role] ?? 99) - (ROLE_WEIGHT[b.role] ?? 99);
+    if (roleDiff !== 0) return roleDiff;
+    return a.name.localeCompare(b.name, "ko-KR");
+  });
+}
+
+function visibleIssues(issues: Issue[]): Issue[] {
+  return issues
+    .filter((issue) => !issue.hiddenAt && issue.status !== "done" && issue.status !== "cancelled")
+    .sort(compareIssues);
+}
+
+function pickSlot(points: OfficePoint[], slotIndex: number): OfficePoint {
+  const point = points[slotIndex % points.length] ?? points[0] ?? { x: 50, y: 50 };
+  const cycle = Math.floor(slotIndex / points.length);
+  const xOffset = cycle === 0 ? 0 : cycle * 2;
+  const yOffset = cycle === 0 ? 0 : cycle * 1.4;
+  return { x: point.x + xOffset, y: point.y + yOffset };
+}
+
+function withDrift(point: OfficePoint, seed: number, nowMs: number, amplitude: number): OfficePoint {
+  const driftX = Math.sin(nowMs / 750 + seed * 0.9) * amplitude;
+  const driftY = Math.cos(nowMs / 930 + seed * 1.3) * (amplitude * 0.7);
+  return {
+    x: Number((point.x + driftX).toFixed(2)),
+    y: Number((point.y + driftY).toFixed(2)),
+  };
+}
+
+function positionForZone(zoneId: OfficeZoneId, zoneIndex: number, globalIndex: number, nowMs: number): OfficePoint {
+  if (zoneId === "command") {
+    const path = COMMAND_PATHS[zoneIndex % COMMAND_PATHS.length] ?? COMMAND_PATHS[0]!;
+    const step = Math.floor(nowMs / 820 + zoneIndex * 1.3) % path.length;
+    return withDrift(path[step]!, globalIndex, nowMs, 0.9);
+  }
+
+  const point =
+    zoneId === "desks" ? pickSlot(DESK_POINTS, zoneIndex)
+      : zoneId === "review" ? pickSlot(REVIEW_POINTS, zoneIndex)
+      : zoneId === "approval" ? pickSlot(APPROVAL_POINTS, zoneIndex)
+      : zoneId === "recovery" ? pickSlot(RECOVERY_POINTS, zoneIndex)
+      : pickSlot(LOUNGE_POINTS, zoneIndex);
+
+  const amplitude = zoneId === "approval" || zoneId === "recovery" ? 0.45 : 0.8;
+  return withDrift(point, globalIndex, nowMs, amplitude);
+}
+
+function zoneForAgent(agent: Agent, issue: Issue | null, liveRun: LiveRunForIssue | null): OfficeZoneId {
+  if (agent.status === "pending_approval") return "approval";
+  if (agent.status === "paused" || agent.status === "error" || agent.status === "terminated") return "recovery";
+  if (liveRun || agent.status === "running") return "command";
+  if (issue?.status === "in_review") return "review";
+  if (issue || agent.status === "active") return "desks";
+  return "lounge";
+}
+
+function motionForZone(zoneId: OfficeZoneId): OfficeAgentState["motion"] {
+  if (zoneId === "command") return "walk";
+  if (zoneId === "approval" || zoneId === "recovery") return "alert";
+  return "float";
+}
+
+export function deriveOfficeAgentStates({
+  agents,
+  issues,
+  liveRuns,
+  nowMs,
+}: {
+  agents: Agent[];
+  issues: Issue[];
+  liveRuns: LiveRunForIssue[];
+  nowMs?: number;
+}): OfficeAgentState[] {
+  const effectiveNow = nowMs ?? Date.now();
+  const issueById = new Map(issues.map((issue) => [issue.id, issue] as const));
+  const runByAgentId = new Map(liveRuns.map((run) => [run.agentId, run] as const));
+  const assignedIssues = new Map<string, Issue[]>();
+
+  for (const issue of visibleIssues(issues)) {
+    if (!issue.assigneeAgentId) continue;
+    const list = assignedIssues.get(issue.assigneeAgentId) ?? [];
+    list.push(issue);
+    assignedIssues.set(issue.assigneeAgentId, list);
+  }
+
+  const zoneCounts: Record<OfficeZoneId, number> = {
+    command: 0,
+    desks: 0,
+    review: 0,
+    approval: 0,
+    recovery: 0,
+    lounge: 0,
+  };
+
+  return sortedAgents(agents).map((agent, globalIndex) => {
+    const liveRun = runByAgentId.get(agent.id) ?? null;
+    const assigned = [...(assignedIssues.get(agent.id) ?? [])].sort(compareIssues);
+    const issueFromRun = liveRun?.issueId ? issueById.get(liveRun.issueId) ?? null : null;
+    const issue = issueFromRun ?? assigned[0] ?? null;
+    const zoneId = zoneForAgent(agent, issue, liveRun);
+    const zoneIndex = zoneCounts[zoneId]++;
+
+    return {
+      agent,
+      issue,
+      liveRun,
+      zoneId,
+      position: positionForZone(zoneId, zoneIndex, globalIndex, effectiveNow),
+      motion: motionForZone(zoneId),
+    };
+  });
+}
+
+export function resolveOfficeViewGateState(params: {
+  selectedCompanyId: string | null;
+  companyCount: number;
+  isLoading: boolean;
+  hasBlockingError: boolean;
+  agentsCount: number;
+}): OfficeViewGateState {
+  if (!params.selectedCompanyId) {
+    return params.companyCount === 0 ? "needs_company_onboarding" : "needs_company_selection";
+  }
+
+  if (params.isLoading) return "loading";
+  if (params.hasBlockingError) return "error";
+  if (params.agentsCount === 0) return "empty_agents";
+  return "ready";
+}

@@ -780,3 +780,79 @@ a.paperclip-project-mention-chip {
 [class*="_toolbarNodeKindSelectContainer_"] {
   z-index: 81 !important;
 }
+
+@keyframes office-agent-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes office-agent-walk {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  25% {
+    transform: translateY(-2px) scale(1.015);
+  }
+  75% {
+    transform: translateY(-4px) scale(0.985);
+  }
+}
+
+@keyframes office-agent-alert {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(-1px) scale(1.025);
+  }
+  70% {
+    transform: translateY(-3px) scale(0.99);
+  }
+}
+
+.office-scene {
+  background:
+    radial-gradient(circle at top, rgba(34, 211, 238, 0.15), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(16, 185, 129, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(2, 6, 23, 0.98));
+}
+
+.office-scene::before,
+.office-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.office-scene::before {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.45;
+}
+
+.office-scene::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 22%, transparent 78%, rgba(255, 255, 255, 0.02));
+}
+
+.office-agent-sprite {
+  image-rendering: pixelated;
+}
+
+.office-agent-float {
+  animation: office-agent-float 2.8s ease-in-out infinite;
+}
+
+.office-agent-walk {
+  animation: office-agent-walk 0.9s steps(2, end) infinite;
+}
+
+.office-agent-alert {
+  animation: office-agent-alert 1.1s ease-in-out infinite;
+}

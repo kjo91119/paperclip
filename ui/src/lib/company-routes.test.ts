@@ -7,6 +7,12 @@ import {
 } from "./company-routes";
 
 describe("company routes", () => {
+  it("treats office paths as board routes that need a company prefix", () => {
+    expect(isBoardPathWithoutPrefix("/office")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/office")).toBeNull();
+    expect(applyCompanyPrefix("/office", "PAP")).toBe("/PAP/office");
+  });
+
   it("treats execution workspace paths as board routes that need a company prefix", () => {
     expect(isBoardPathWithoutPrefix("/execution-workspaces/workspace-123")).toBe(true);
     expect(extractCompanyPrefixFromPath("/execution-workspaces/workspace-123")).toBeNull();
@@ -19,5 +25,9 @@ describe("company routes", () => {
     expect(toCompanyRelativePath("/PAP/execution-workspaces/workspace-123")).toBe(
       "/execution-workspaces/workspace-123",
     );
+  });
+
+  it("normalizes prefixed office paths back to company-relative paths", () => {
+    expect(toCompanyRelativePath("/PAP/office")).toBe("/office");
   });
 });
