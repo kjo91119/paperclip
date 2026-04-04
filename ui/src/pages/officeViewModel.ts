@@ -17,6 +17,15 @@ export interface OfficeAgentState {
   motion: "float" | "walk" | "alert";
 }
 
+export type OfficeConversationTargetReason = "current_issue" | "selected_project" | "priority_fallback";
+
+export interface OfficeConversationTarget {
+  issue: Issue | null;
+  reason: OfficeConversationTargetReason | null;
+}
+
+export type OfficeReferencePathMode = "manual" | "project";
+
 export type OfficeViewGateState =
   | "needs_company_onboarding"
   | "needs_company_selection"
@@ -134,6 +143,68 @@ function visibleIssues(issues: Issue[]): Issue[] {
   return issues
     .filter((issue) => !issue.hiddenAt && issue.status !== "done" && issue.status !== "cancelled")
     .sort(compareIssues);
+}
+
+export function pickOfficeConversationTarget(params: {
+  issues: Issue[];
+  agentId: string;
+  projectId?: string | null;
+  preferredIssueId?: string | null;
+}): OfficeConversationTarget {
+  const assigned = visibleIssues(params.issues).filter((issue) => issue.assigneeAgentId === params.agentId);
+  const preferredIssue = params.preferredIssueId ? assigned.find((issue) => issue.id === params.preferredIssueId) ?? null : null;
+
+  if (params.projectId) {
+    if (preferredIssue?.projectId === params.projectId) {
+      return { issue: preferredIssue, reason: "current_issue" };
+    }
+
+    const projectIssue = assigned.find((issue) => issue.projectId === params.projectId) ?? null;
+    return {
+      issue: projectIssue,
+      reason: projectIssue ? "selected_project" : null,
+    };
+  }
+
+  if (preferredIssue) {
+    return { issue: preferredIssue, reason: "current_issue" };
+  }
+
+  return {
+    issue: assigned[0] ?? null,
+    reason: assigned[0] ? "priority_fallback" : null,
+  };
+}
+
+export function pickOfficeConversationIssue(params: {
+  issues: Issue[];
+  agentId: string;
+  projectId?: string | null;
+  preferredIssueId?: string | null;
+}): Issue | null {
+  return pickOfficeConversationTarget(params).issue;
+}
+
+export function syncOfficeReferencePath(params: {
+  referencePath: string;
+  mode: OfficeReferencePathMode;
+  selectedProjectPath?: string | null;
+}): string {
+  if (params.mode !== "project") return params.referencePath;
+  return params.selectedProjectPath?.trim() ?? "";
+}
+
+export function hasOfficeReferencePathMismatch(params: {
+  selectedProjectId?: string | null;
+  selectedProjectPath?: string | null;
+  referencePath: string;
+  mode: OfficeReferencePathMode;
+}): boolean {
+  const selectedProjectPath = params.selectedProjectPath?.trim() ?? "";
+  const referencePath = params.referencePath.trim();
+  if (!params.selectedProjectId || !selectedProjectPath || !referencePath) return false;
+  if (params.mode === "project") return false;
+  return referencePath !== selectedProjectPath;
 }
 
 function pickSlot(points: OfficePoint[], slotIndex: number): OfficePoint {

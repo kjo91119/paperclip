@@ -1,7 +1,13 @@
 import type { Agent, Issue } from "@paperclipai/shared";
 import { describe, expect, it } from "vitest";
 import type { LiveRunForIssue } from "../api/heartbeats";
-import { deriveOfficeAgentStates, resolveOfficeViewGateState } from "./officeViewModel";
+import {
+  deriveOfficeAgentStates,
+  hasOfficeReferencePathMismatch,
+  pickOfficeConversationTarget,
+  resolveOfficeViewGateState,
+  syncOfficeReferencePath,
+} from "./officeViewModel";
 
 function createAgent(overrides: Partial<Agent> = {}): Agent {
   return {
@@ -178,5 +184,183 @@ describe("resolveOfficeViewGateState", () => {
         agentsCount: 0,
       }),
     ).toBe("empty_agents");
+  });
+});
+
+describe("pickOfficeConversationTarget", () => {
+  it("prefers the selected project's visible issue when the current issue belongs to another project", () => {
+    const target = pickOfficeConversationTarget({
+      agentId: "agent-1",
+      projectId: "project-b",
+      preferredIssueId: "issue-a",
+      issues: [
+        createIssue({
+          id: "issue-a",
+          projectId: "project-a",
+          assigneeAgentId: "agent-1",
+          status: "in_progress",
+        }),
+        createIssue({
+          id: "issue-b",
+          projectId: "project-b",
+          assigneeAgentId: "agent-1",
+          status: "todo",
+        }),
+      ],
+    });
+
+    expect(target.issue?.id).toBe("issue-b");
+    expect(target.reason).toBe("selected_project");
+  });
+
+  it("keeps the current issue when it already matches the selected project", () => {
+    const target = pickOfficeConversationTarget({
+      agentId: "agent-1",
+      projectId: "project-b",
+      preferredIssueId: "issue-b",
+      issues: [
+        createIssue({
+          id: "issue-todo",
+          assigneeAgentId: "agent-1",
+          status: "todo",
+        }),
+        createIssue({
+          id: "issue-b",
+          assigneeAgentId: "agent-1",
+          projectId: "project-b",
+          status: "todo",
+          updatedAt: new Date("2026-04-03T00:01:00.000Z"),
+        }),
+      ],
+    });
+
+    expect(target.issue?.id).toBe("issue-b");
+    expect(target.reason).toBe("current_issue");
+  });
+
+  it("prefers the current live issue when no project is selected", () => {
+    const target = pickOfficeConversationTarget({
+      agentId: "agent-1",
+      preferredIssueId: "issue-live",
+      issues: [
+        createIssue({
+          id: "issue-priority",
+          assigneeAgentId: "agent-1",
+          status: "in_progress",
+        }),
+        createIssue({
+          id: "issue-live",
+          assigneeAgentId: "agent-1",
+          status: "todo",
+        }),
+      ],
+    });
+
+    expect(target.issue?.id).toBe("issue-live");
+    expect(target.reason).toBe("current_issue");
+  });
+
+  it("falls back to the highest-priority visible assigned issue when no project is selected", () => {
+    const target = pickOfficeConversationTarget({
+      agentId: "agent-1",
+      issues: [
+        createIssue({
+          id: "issue-todo",
+          assigneeAgentId: "agent-1",
+          status: "todo",
+        }),
+        createIssue({
+          id: "issue-progress",
+          assigneeAgentId: "agent-1",
+          status: "in_progress",
+        }),
+      ],
+    });
+
+    expect(target.issue?.id).toBe("issue-progress");
+    expect(target.reason).toBe("priority_fallback");
+  });
+
+  it("ignores hidden and completed issues", () => {
+    const target = pickOfficeConversationTarget({
+      agentId: "agent-1",
+      issues: [
+        createIssue({
+          id: "issue-hidden",
+          assigneeAgentId: "agent-1",
+          status: "in_progress",
+          hiddenAt: new Date("2026-04-03T01:00:00.000Z"),
+        }),
+        createIssue({
+          id: "issue-done",
+          assigneeAgentId: "agent-1",
+          status: "done",
+        }),
+        createIssue({
+          id: "issue-open",
+          assigneeAgentId: "agent-1",
+          status: "blocked",
+        }),
+      ],
+    });
+
+    expect(target.issue?.id).toBe("issue-open");
+    expect(target.reason).toBe("priority_fallback");
+  });
+});
+
+describe("syncOfficeReferencePath", () => {
+  it("updates project-managed paths when the selected project changes", () => {
+    expect(
+      syncOfficeReferencePath({
+        referencePath: "/repo-a",
+        mode: "project",
+        selectedProjectPath: "/repo-b",
+      }),
+    ).toBe("/repo-b");
+  });
+
+  it("clears a project-managed path when no project path is available", () => {
+    expect(
+      syncOfficeReferencePath({
+        referencePath: "/repo-a",
+        mode: "project",
+        selectedProjectPath: "",
+      }),
+    ).toBe("");
+  });
+
+  it("preserves manually entered paths across project changes", () => {
+    expect(
+      syncOfficeReferencePath({
+        referencePath: "C:\\Users\\frog5\\Desktop\\custom-notes",
+        mode: "manual",
+        selectedProjectPath: "/repo-b",
+      }),
+    ).toBe("C:\\Users\\frog5\\Desktop\\custom-notes");
+  });
+});
+
+describe("hasOfficeReferencePathMismatch", () => {
+  it("warns when a manual path differs from the selected project's path", () => {
+    expect(
+      hasOfficeReferencePathMismatch({
+        selectedProjectId: "project-b",
+        selectedProjectPath: "/repo-b",
+        referencePath: "C:\\Users\\frog5\\Desktop\\repo-a",
+        mode: "manual",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not warn for project-managed paths", () => {
+    expect(
+      hasOfficeReferencePathMismatch({
+        selectedProjectId: "project-b",
+        selectedProjectPath: "/repo-b",
+        referencePath: "/repo-b",
+        mode: "project",
+      }),
+    ).toBe(false);
   });
 });

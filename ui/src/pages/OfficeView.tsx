@@ -1,33 +1,48 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
-import type { ActivityEvent, Issue } from "@paperclipai/shared";
+import type { ActivityEvent, Issue, Project } from "@paperclipai/shared";
 import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
   CircleDot,
   Clock3,
+  Copy,
   DollarSign,
+  FolderKanban,
+  MessageSquare,
   PanelsTopLeft,
   PauseCircle,
+  Send,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { activityApi } from "../api/activity";
 import { agentsApi } from "../api/agents";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
+import { projectsApi } from "../api/projects";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
+import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
-import { agentUrl, cn, formatCents, formatStatusLabel, issueUrl, relativeTime } from "../lib/utils";
+import { agentUrl, cn, formatCents, formatStatusLabel, issueUrl, projectUrl, relativeTime } from "../lib/utils";
 import {
   deriveOfficeAgentStates,
+  hasOfficeReferencePathMismatch,
+  pickOfficeConversationTarget,
   resolveOfficeViewGateState,
+  syncOfficeReferencePath,
+  type OfficeReferencePathMode,
+  type OfficeConversationTargetReason,
   type OfficeAgentState,
   type OfficeZoneId,
 } from "./officeViewModel";
@@ -60,11 +75,136 @@ const DESK_DECORATIONS = [
   { x: 82, y: 63, label: "Desk H" },
 ];
 
+const OFFICE_DRAFT_STORAGE_PREFIX = "paperclip:office-composer";
+
+const OFFICE_MARKETING_TEMPLATES = [
+  {
+    label: "홍보 전략",
+    build(projectName: string | null) {
+      return {
+        title: `${projectName ?? "프로젝트"} 홍보 전략 초안`,
+        body:
+          `${projectName ?? "이 프로젝트"}를 빠르게 검토하고 현실적인 홍보 전략 3가지를 제안해주세요.\n` +
+          "- 핵심 고객 세그먼트\n" +
+          "- 가장 먼저 써볼 채널\n" +
+          "- 7일 안에 가능한 실험\n" +
+          "- 지금 부족한 자료",
+      };
+    },
+  },
+  {
+    label: "콘텐츠 아이디어",
+    build(projectName: string | null) {
+      return {
+        title: `${projectName ?? "프로젝트"} 콘텐츠 아이디어`,
+        body:
+          `${projectName ?? "이 프로젝트"} 홍보를 위해 바로 만들 수 있는 콘텐츠 아이디어 10개를 제안해주세요.\n` +
+          "- 숏폼/블로그/상세페이지/카카오톡 메시지로 나눠서\n" +
+          "- 클릭을 유도할 한 줄 후크 포함\n" +
+          "- 실제 제작 난이도도 함께 표시",
+      };
+    },
+  },
+  {
+    label: "첫 실험안",
+    build(projectName: string | null) {
+      return {
+        title: `${projectName ?? "프로젝트"} 첫 검증 실험안`,
+        body:
+          `${projectName ?? "이 프로젝트"}의 첫 홍보 검증 실험 3개를 설계해주세요.\n` +
+          "- 실험 목적\n" +
+          "- 준비물\n" +
+          "- 측정 지표\n" +
+          "- 실패했을 때 다음 대안",
+      };
+    },
+  },
+  {
+    label: "경쟁사 비교",
+    build(projectName: string | null) {
+      return {
+        title: `${projectName ?? "프로젝트"} 경쟁사 비교`,
+        body:
+          `${projectName ?? "이 프로젝트"}와 비슷한 서비스 관점에서 경쟁사/대체재를 가정하고,\n` +
+          "- 차별점\n" +
+          "- 약점\n" +
+          "- 포지셔닝 문구\n" +
+          "- 피해야 할 메시지\n" +
+          "를 정리해주세요.",
+      };
+    },
+  },
+] as const;
+
+function officeDraftStorageKey(companyId: string | null) {
+  return companyId ? `${OFFICE_DRAFT_STORAGE_PREFIX}:${companyId}` : null;
+}
+
+function defaultOfficeIssueTitle(agentName: string | null, projectName: string | null) {
+  if (projectName && agentName) return `${projectName} 관련 ${agentName} 협업 요청`;
+  if (projectName) return `${projectName} 협업 요청`;
+  if (agentName) return `${agentName} 협업 요청`;
+  return "오피스 협업 요청";
+}
+
+function buildOfficeMessageBody(input: {
+  body: string;
+  referencePath: string;
+  project: Project | null;
+}) {
+  const main = input.body.trim();
+  const project = input.project;
+  const contextLines: string[] = [];
+
+  if (project) {
+    contextLines.push(`- 프로젝트: ${project.name}`);
+  }
+
+  const preferredPath =
+    input.referencePath.trim() ||
+    project?.codebase.localFolder ||
+    project?.codebase.effectiveLocalFolder ||
+    "";
+  if (preferredPath) {
+    contextLines.push(`- 로컬 경로: \`${preferredPath}\``);
+  }
+
+  if (project?.codebase.repoUrl) {
+    contextLines.push(`- 저장소: ${project.codebase.repoUrl}`);
+  }
+
+  if (contextLines.length === 0) return main;
+
+  return `${main}\n\n컨텍스트\n${contextLines.join("\n")}`;
+}
+
+function formatConversationTargetReason(reason: OfficeConversationTargetReason | null, hasLiveRun: boolean) {
+  if (reason === "current_issue") {
+    return hasLiveRun ? "선택 근거: 실시간 실행 중인 현재 작업" : "선택 근거: 선택한 에이전트의 현재 작업";
+  }
+  if (reason === "selected_project") {
+    return "선택 근거: 선택한 프로젝트 기준으로 열린 이슈";
+  }
+  if (reason === "priority_fallback") {
+    return "선택 근거: 현재 작업이 없어 열린 이슈 우선순위 기준";
+  }
+  return null;
+}
+
 export function OfficeView() {
   const { selectedCompanyId, selectedCompany, companies } = useCompany();
-  const { openOnboarding } = useDialog();
+  const { openOnboarding, openNewProject } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { pushToast } = useToast();
+  const queryClient = useQueryClient();
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [messageTitle, setMessageTitle] = useState("");
+  const [messageBody, setMessageBody] = useState("");
+  const [referencePath, setReferencePath] = useState("");
+  const [referencePathMode, setReferencePathMode] = useState<OfficeReferencePathMode>("manual");
+  const [lastTouchedIssueId, setLastTouchedIssueId] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "오피스" }]);
@@ -117,16 +257,117 @@ export function OfficeView() {
     refetchIntervalInBackground: true,
   });
 
+  const projectsQuery = useQuery({
+    queryKey: queryKeys.projects.list(selectedCompanyId!),
+    queryFn: () => projectsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: 20_000,
+    refetchIntervalInBackground: true,
+  });
+
   const agents = agentsQuery.data ?? [];
   const issues = issuesQuery.data ?? [];
   const dashboard = dashboardQuery.data;
   const liveRuns = liveRunsQuery.data ?? [];
   const activity = activityQuery.data ?? [];
+  const projects = useMemo(
+    () =>
+      [...(projectsQuery.data ?? [])]
+        .filter((project) => !project.archivedAt)
+        .sort((a, b) => a.name.localeCompare(b.name, "ko-KR")),
+    [projectsQuery.data],
+  );
+
+  const draftStorageKey = officeDraftStorageKey(selectedCompanyId);
+
+  useEffect(() => {
+    if (!draftStorageKey) return;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) {
+        setSelectedAgentId("");
+        setSelectedProjectId("");
+        setMessageTitle("");
+        setMessageBody("");
+        setReferencePath("");
+        setReferencePathMode("manual");
+        return;
+      }
+      const parsed = JSON.parse(raw) as {
+        selectedAgentId?: string;
+        selectedProjectId?: string;
+        messageTitle?: string;
+        messageBody?: string;
+        referencePath?: string;
+        referencePathMode?: OfficeReferencePathMode;
+      };
+      setSelectedAgentId(parsed.selectedAgentId ?? "");
+      setSelectedProjectId(parsed.selectedProjectId ?? "");
+      setMessageTitle(parsed.messageTitle ?? "");
+      setMessageBody(parsed.messageBody ?? "");
+      setReferencePath(parsed.referencePath ?? "");
+      setReferencePathMode(parsed.referencePathMode === "project" ? "project" : "manual");
+    } catch {
+      setSelectedAgentId("");
+      setSelectedProjectId("");
+      setMessageTitle("");
+      setMessageBody("");
+      setReferencePath("");
+      setReferencePathMode("manual");
+    }
+  }, [draftStorageKey]);
+
+  useEffect(() => {
+    if (!draftStorageKey) return;
+    try {
+      localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          selectedAgentId,
+          selectedProjectId,
+          messageTitle,
+          messageBody,
+          referencePath,
+          referencePathMode,
+        }),
+      );
+    } catch {
+      // Ignore localStorage failures.
+    }
+  }, [draftStorageKey, selectedAgentId, selectedProjectId, messageTitle, messageBody, referencePath, referencePathMode]);
 
   const agentStates = useMemo(
     () => deriveOfficeAgentStates({ agents, issues, liveRuns, nowMs }),
     [agents, issues, liveRuns, nowMs],
   );
+
+  useEffect(() => {
+    if (selectedAgentId && agents.some((agent) => agent.id === selectedAgentId)) return;
+    setSelectedAgentId(agentStates[0]?.agent.id ?? "");
+  }, [agents, agentStates, selectedAgentId]);
+
+  useEffect(() => {
+    if (selectedProjectId && projects.some((project) => project.id === selectedProjectId)) return;
+    if (!selectedProjectId && projects.length !== 1) return;
+    setSelectedProjectId(projects[0]?.id ?? "");
+  }, [projects, selectedProjectId]);
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
+  const selectedProjectPath =
+    selectedProject?.codebase.localFolder ||
+    selectedProject?.codebase.effectiveLocalFolder ||
+    "";
+
+  useEffect(() => {
+    const syncedReferencePath = syncOfficeReferencePath({
+      referencePath,
+      mode: referencePathMode,
+      selectedProjectPath,
+    });
+    if (syncedReferencePath !== referencePath) {
+      setReferencePath(syncedReferencePath);
+    }
+  }, [referencePath, referencePathMode, selectedProjectPath]);
 
   const liveIssueIds = useMemo(
     () => new Set(liveRuns.map((run) => run.issueId).filter((issueId): issueId is string => Boolean(issueId))),
@@ -153,6 +394,121 @@ export function OfficeView() {
 
   const recentEvents = useMemo(() => activity.slice(0, 6), [activity]);
   const error = agentsQuery.error ?? issuesQuery.error ?? dashboardQuery.error ?? liveRunsQuery.error ?? activityQuery.error;
+  const selectedAgentState = agentStates.find((state) => state.agent.id === selectedAgentId) ?? null;
+  const selectedConversationTarget = useMemo(
+    () =>
+      selectedAgentId
+        ? pickOfficeConversationTarget({
+            issues,
+            agentId: selectedAgentId,
+            projectId: selectedProjectId || null,
+            preferredIssueId: selectedAgentState?.issue?.id ?? null,
+          })
+        : { issue: null, reason: null },
+    [issues, selectedAgentId, selectedProjectId, selectedAgentState?.issue?.id],
+  );
+  const selectedConversationIssue = selectedConversationTarget.issue;
+  const resolvedMessageTitle =
+    messageTitle.trim() || defaultOfficeIssueTitle(selectedAgentState?.agent.name ?? null, selectedProject?.name ?? null);
+  const composedMessageBody = buildOfficeMessageBody({
+    body: messageBody,
+    referencePath,
+    project: selectedProject,
+  });
+  const hasReferencePathMismatch = hasOfficeReferencePathMismatch({
+    selectedProjectId: selectedProjectId || null,
+    selectedProjectPath,
+    referencePath,
+    mode: referencePathMode,
+  });
+  const lastTouchedIssue = useMemo(
+    () => issues.find((issue) => issue.id === lastTouchedIssueId) ?? null,
+    [issues, lastTouchedIssueId],
+  );
+
+  const clearComposer = () => {
+    setMessageTitle("");
+    setMessageBody("");
+  };
+
+  const invalidateOfficeData = async (issueId?: string) => {
+    if (!selectedCompanyId) return;
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(selectedCompanyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(selectedCompanyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.activity(selectedCompanyId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.liveRuns(selectedCompanyId) }),
+      ...(issueId
+        ? [
+            queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId) }),
+          ]
+        : []),
+    ]);
+  };
+
+  const createIssueFromOffice = useMutation({
+    mutationFn: async () => {
+      if (!selectedCompanyId) throw new Error("회사를 먼저 선택하세요.");
+      if (!selectedAgentId) throw new Error("에이전트를 먼저 선택하세요.");
+      if (!messageBody.trim()) throw new Error("보낼 내용을 입력하세요.");
+
+      return issuesApi.create(selectedCompanyId, {
+        title: resolvedMessageTitle,
+        description: composedMessageBody,
+        assigneeAgentId: selectedAgentId,
+        ...(selectedProject ? { projectId: selectedProject.id } : {}),
+        status: "todo",
+        priority: "high",
+      });
+    },
+    onSuccess: async (issue) => {
+      await invalidateOfficeData(issue.id);
+      setLastTouchedIssueId(issue.id);
+      clearComposer();
+      pushToast({
+        title: "오피스 메시지를 새 이슈로 보냈습니다",
+        body: `${issue.identifier ?? issue.id.slice(0, 8)} ${issue.title}`,
+        tone: "success",
+        action: { label: "이슈 열기", href: issueUrl(issue) },
+      });
+    },
+    onError: (mutationError) => {
+      pushToast({
+        title: "이슈 생성에 실패했습니다",
+        body: mutationError instanceof Error ? mutationError.message : "오피스 메시지를 이슈로 만들지 못했습니다.",
+        tone: "error",
+      });
+    },
+  });
+
+  const commentOnSelectedIssue = useMutation({
+    mutationFn: async () => {
+      if (!selectedConversationIssue) throw new Error("코멘트를 남길 현재 작업이 없습니다.");
+      if (!messageBody.trim()) throw new Error("보낼 내용을 입력하세요.");
+      await issuesApi.addComment(selectedConversationIssue.id, composedMessageBody);
+      return selectedConversationIssue;
+    },
+    onSuccess: async (issue) => {
+      await invalidateOfficeData(issue.id);
+      setLastTouchedIssueId(issue.id);
+      clearComposer();
+      pushToast({
+        title: "현재 작업에 코멘트를 남겼습니다",
+        body: `${issue.identifier ?? issue.id.slice(0, 8)} ${issue.title}`,
+        tone: "success",
+        action: { label: "이슈 열기", href: issueUrl(issue) },
+      });
+    },
+    onError: (mutationError) => {
+      pushToast({
+        title: "코멘트 추가에 실패했습니다",
+        body: mutationError instanceof Error ? mutationError.message : "현재 작업에 코멘트를 추가하지 못했습니다.",
+        tone: "error",
+      });
+    },
+  });
+
   const gateState = resolveOfficeViewGateState({
     selectedCompanyId,
     companyCount: companies.length,
@@ -478,6 +834,356 @@ export function OfficeView() {
           </InfoCard>
         </aside>
       </div>
+
+      <section className="rounded-[30px] border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.14)]">
+        <div className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Office Message Dock
+            </div>
+            <h2 className="text-sm font-semibold text-foreground">오피스 메시지 독</h2>
+            <p className="max-w-3xl text-xs text-muted-foreground">
+              선택한 에이전트에게 새 업무를 보내거나, 지금 진행 중인 이슈에 바로 코멘트를 남길 수 있습니다.
+              프로젝트 경로와 저장소 정보도 함께 실어 보내도록 맞춰뒀습니다.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {selectedProjectPath ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setReferencePath(selectedProjectPath);
+                  pushToast({ title: "프로젝트 경로를 메시지에 채웠습니다", tone: "success" });
+                }}
+              >
+                <FolderKanban className="mr-1 h-3.5 w-3.5" />
+                프로젝트 경로 삽입
+              </Button>
+            ) : null}
+            {selectedProject ? (
+              <Link
+                to={projectUrl(selectedProject)}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+              >
+                프로젝트 열기
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
+            ) : (
+              <Button variant="outline" size="sm" onClick={openNewProject}>
+                프로젝트 만들기
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-5 px-5 py-5 xl:grid-cols-[minmax(0,1.45fr)_22rem]">
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                대상 에이전트
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {agentStates.map((state) => (
+                  <button
+                    key={state.agent.id}
+                    type="button"
+                    onClick={() => setSelectedAgentId(state.agent.id)}
+                    className={cn(
+                      "rounded-2xl border px-3 py-2 text-left transition-colors",
+                      selectedAgentId === state.agent.id
+                        ? "border-cyan-400/50 bg-cyan-400/10 text-foreground"
+                        : "border-border bg-background text-foreground hover:bg-accent/60",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{state.agent.name}</span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                        {state.agent.role}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {state.issue ? state.issue.title : fallbackZoneLabel(state.zoneId)}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <label className="space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  대상 프로젝트
+                </span>
+                <select
+                  value={selectedProjectId}
+                  onChange={(event) => setSelectedProjectId(event.target.value)}
+                  className="border-input dark:bg-input/30 focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-md border bg-transparent px-3 text-sm outline-none focus-visible:ring-[3px]"
+                >
+                  <option value="">프로젝트 없이 보내기</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  새 이슈 제목
+                </span>
+                <Input
+                  value={messageTitle}
+                  onChange={(event) => setMessageTitle(event.target.value)}
+                  placeholder={defaultOfficeIssueTitle(
+                    selectedAgentState?.agent.name ?? null,
+                    selectedProject?.name ?? null,
+                  )}
+                />
+              </label>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                빠른 템플릿
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {OFFICE_MARKETING_TEMPLATES.map((template) => {
+                  const seed = template.build(selectedProject?.name ?? null);
+                  return (
+                    <button
+                      key={template.label}
+                      type="button"
+                      onClick={() => {
+                        setMessageTitle(seed.title);
+                        setMessageBody(seed.body);
+                      }}
+                      className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                    >
+                      <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                      {template.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <label className="space-y-2">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  참고 경로
+                </span>
+                <Input
+                  value={referencePath}
+                  onChange={(event) => {
+                    setReferencePath(event.target.value);
+                    setReferencePathMode("manual");
+                  }}
+                  placeholder="C:\\Users\\frog5\\Desktop\\... 또는 /mnt/c/Users/..."
+                />
+              </label>
+              <div className="flex flex-wrap items-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!referencePath.trim() && !selectedProjectPath}
+                  onClick={() => {
+                    const valueToCopy = referencePath.trim() || selectedProjectPath;
+                    if (!valueToCopy) return;
+                    if (!navigator.clipboard?.writeText) {
+                      pushToast({
+                        title: "경로 복사에 실패했습니다",
+                        body: "이 환경에서는 클립보드 복사를 지원하지 않습니다.",
+                        tone: "error",
+                      });
+                      return;
+                    }
+
+                    navigator.clipboard.writeText(valueToCopy)
+                      .then(() => {
+                        pushToast({ title: "경로를 복사했습니다", tone: "success" });
+                      })
+                      .catch((copyError) => {
+                        pushToast({
+                          title: "경로 복사에 실패했습니다",
+                          body: copyError instanceof Error ? copyError.message : "브라우저가 클립보드 복사를 허용하지 않았습니다.",
+                          tone: "error",
+                        });
+                      });
+                  }}
+                >
+                  <Copy className="mr-1 h-3.5 w-3.5" />
+                  경로 복사
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!selectedProjectPath}
+                  onClick={() => {
+                    setReferencePath(selectedProjectPath);
+                    setReferencePathMode("project");
+                  }}
+                >
+                  프로젝트 경로 사용
+                </Button>
+              </div>
+            </div>
+
+            {referencePathMode === "project" && selectedProject ? (
+              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
+                현재 참고 경로는 선택한 프로젝트의 로컬 폴더와 자동으로 동기화됩니다.
+              </div>
+            ) : null}
+
+            {hasReferencePathMismatch ? (
+              <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                현재 참고 경로가 선택한 프로젝트의 로컬 폴더와 다릅니다. 이 상태로 보내면 수동 입력한 경로가 우선 전송됩니다.
+              </div>
+            ) : null}
+
+            {projectsQuery.error instanceof Error ? (
+              <p className="text-xs text-destructive">{projectsQuery.error.message}</p>
+            ) : null}
+
+            <label className="space-y-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                메시지 본문
+              </span>
+              <Textarea
+                value={messageBody}
+                onChange={(event) => setMessageBody(event.target.value)}
+                className="min-h-[180px]"
+                placeholder="예: 장사톡 프로젝트를 보고 첫 홍보 전략, 타깃 고객, 실험 채널, 필요한 자료를 정리해주세요."
+              />
+            </label>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                disabled={!selectedConversationIssue || !messageBody.trim() || createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
+                onClick={() => commentOnSelectedIssue.mutate()}
+              >
+                <MessageSquare className="mr-1 h-3.5 w-3.5" />
+                현재 작업에 코멘트
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!selectedAgentId || !messageBody.trim() || createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
+                onClick={() => createIssueFromOffice.mutate()}
+              >
+                <Send className="mr-1 h-3.5 w-3.5" />
+                새 이슈로 보내기
+              </Button>
+              {(createIssueFromOffice.isPending || commentOnSelectedIssue.isPending) ? (
+                <span className="inline-flex items-center rounded-full bg-muted px-3 py-2 text-xs text-muted-foreground">
+                  오피스 메시지 전송 중...
+                </span>
+              ) : null}
+              {lastTouchedIssue ? (
+                <Link
+                  to={issueUrl(lastTouchedIssue)}
+                  className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                >
+                  마지막 이슈 열기
+                  <ArrowUpRight className="h-4 w-4" />
+                </Link>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <OfficeDockCard
+              title="선택한 에이전트"
+              icon={Bot}
+              description={selectedAgentState ? "지금 이 에이전트에게 바로 말을 거는 중입니다." : "먼저 에이전트를 선택하세요."}
+            >
+              {selectedAgentState ? (
+                <div className="space-y-2 text-sm">
+                  <div className="font-medium text-foreground">{selectedAgentState.agent.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    역할: {selectedAgentState.agent.role} · 현재 구역: {fallbackZoneLabel(selectedAgentState.zoneId)}
+                  </div>
+                  <div className="rounded-2xl border border-border bg-background/70 px-3 py-2 text-xs text-muted-foreground">
+                    {selectedAgentState.issue ? selectedAgentState.issue.title : "열린 이슈 없이 다음 작업을 기다리고 있습니다."}
+                  </div>
+                  {selectedAgentState.liveRun ? (
+                    <div className="text-[11px] text-cyan-300">실시간 실행 기준으로 현재 작업을 추적 중입니다.</div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">에이전트를 선택하면 현재 상태와 연결 가능한 작업을 보여줍니다.</p>
+              )}
+            </OfficeDockCard>
+
+            <OfficeDockCard
+              title="코멘트 대상"
+              icon={MessageSquare}
+              description="현재 작업이 있으면 여기에 코멘트를 붙이고, 없으면 새 이슈를 만드는 흐름입니다."
+            >
+              {selectedConversationIssue ? (
+                <Link
+                  to={issueUrl(selectedConversationIssue)}
+                  className="block rounded-2xl border border-border bg-background/70 px-3 py-3 transition-colors hover:bg-accent/60"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm font-medium text-foreground">
+                      {selectedConversationIssue.identifier ?? selectedConversationIssue.id.slice(0, 8)}
+                    </span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      {formatStatusLabel(selectedConversationIssue.status)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{selectedConversationIssue.title}</p>
+                  {formatConversationTargetReason(selectedConversationTarget.reason, Boolean(selectedAgentState?.liveRun)) ? (
+                    <p className="mt-2 text-[11px] text-cyan-300">
+                      {formatConversationTargetReason(selectedConversationTarget.reason, Boolean(selectedAgentState?.liveRun))}
+                    </p>
+                  ) : null}
+                </Link>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground">
+                  {selectedProject
+                    ? "이 프로젝트 기준으로 붙일 현재 이슈가 없어, 새 이슈 생성이 더 안전합니다."
+                    : "붙일 현재 이슈가 없어 새 이슈 생성 흐름으로 보낼 준비를 합니다."}
+                </div>
+              )}
+            </OfficeDockCard>
+
+            <OfficeDockCard
+              title="프로젝트 컨텍스트"
+              icon={FolderKanban}
+              description="에이전트가 읽을 수 있는 로컬 폴더와 저장소 정보를 함께 확인합니다."
+            >
+              {selectedProject ? (
+                <div className="space-y-2 text-sm">
+                  <div className="font-medium text-foreground">{selectedProject.name}</div>
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    <div>로컬 폴더: {selectedProjectPath || "아직 연결되지 않음"}</div>
+                    <div>저장소: {selectedProject.codebase.repoUrl ?? "아직 연결되지 않음"}</div>
+                  </div>
+                  {!selectedProjectPath && !selectedProject.codebase.repoUrl ? (
+                    <div className="rounded-2xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+                      아직 코드베이스가 연결되지 않았습니다. 프로젝트 상세에서 로컬 폴더나 GitHub repo를 연결하면 에이전트가 더 잘 협업할 수 있습니다.
+                    </div>
+                  ) : null}
+                </div>
+              ) : projects.length > 0 ? (
+                <p className="text-sm text-muted-foreground">프로젝트를 선택하면 장사톡 같은 실제 작업 폴더와 저장소를 함께 보낼 수 있습니다.</p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">아직 프로젝트가 없습니다. 새 프로젝트를 만들고 로컬 폴더를 연결해두면 협업이 훨씬 쉬워집니다.</p>
+                  <Button variant="outline" size="sm" onClick={openNewProject}>
+                    프로젝트 만들기
+                  </Button>
+                </div>
+              )}
+            </OfficeDockCard>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
@@ -506,6 +1212,33 @@ function OfficeStatCard({
       </div>
       <p className="mt-3 text-xs text-muted-foreground">{detail}</p>
     </div>
+  );
+}
+
+function OfficeDockCard({
+  title,
+  icon: Icon,
+  description,
+  children,
+}: {
+  title: string;
+  icon: typeof Bot;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-[24px] border border-border bg-background/70 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 rounded-2xl border border-border bg-muted/40 p-2.5 text-muted-foreground">
+          <Icon className="h-[18px] w-[18px]" />
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
