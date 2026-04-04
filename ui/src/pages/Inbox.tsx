@@ -63,6 +63,7 @@ import {
   type InboxWorkItem,
 } from "../lib/inbox";
 import { useDismissedInboxItems, useReadInboxItems } from "../hooks/useInboxBadge";
+import { createOfficeConversationPath, isOfficeMeetingIssue } from "./officeViewModel";
 
 type InboxCategoryFilter =
   | "everything"
@@ -1546,58 +1547,79 @@ export function Inbox() {
                 const isUnread = issue.isUnreadForMe && !fadingOutIssues.has(issue.id);
                 const isFading = fadingOutIssues.has(issue.id);
                 const isArchiving = archivingIssueIds.has(issue.id);
+                const officeConversationPath = issue.assigneeAgentId
+                  ? createOfficeConversationPath({
+                      mode: isOfficeMeetingIssue(issue) ? "meeting" : "direct",
+                      agentId: issue.assigneeAgentId,
+                      issueId: issue.id,
+                      projectId: issue.projectId,
+                    })
+                  : null;
                 const row = (
-                  <IssueRow
+                  <div
                     key={`issue:${issue.id}`}
-                    issue={issue}
-                    issueLinkState={issueLinkState}
-                    selected={isSelected}
-                    className={
+                    className={cn(
                       isArchiving
                         ? "pointer-events-none -translate-x-4 scale-[0.98] opacity-0 transition-all duration-200 ease-out"
-                        : "transition-all duration-200 ease-out"
-                    }
-                    desktopMetaLeading={
-                      <InboxIssueMetaLeading
-                        issue={issue}
-                        selected={isSelected}
-                        isLive={liveIssueIds.has(issue.id)}
-                      />
-                    }
-                    desktopTrailing={
-                      <>
-                        <InboxIssueSignalBadge signal={issueSignal} selected={isSelected} />
-                        {issueActorName ? (
-                          <span
-                            className={cn(
-                              "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                              isSelected
-                                ? "border-muted-foreground/30 bg-muted text-muted-foreground"
-                                : "border-border bg-background text-foreground",
-                            )}
-                          >
-                            {issueActorName}
-                          </span>
-                        ) : null}
-                      </>
-                    }
-                    mobileMeta={
-                      `${issueSignalLabel} · ${timeAgo(issueActivityTime)}`
-                    }
-                    unreadState={
-                      isUnread ? "visible" : isFading ? "fading" : "hidden"
-                    }
-                    onMarkRead={() => markReadMutation.mutate(issue.id)}
-                    onArchive={
-                      canArchiveFromTab
-                        ? () => archiveIssueMutation.mutate(issue.id)
-                        : undefined
-                    }
-                    archiveDisabled={isArchiving || archiveIssueMutation.isPending}
-                    trailingMeta={
-                      timeAgo(issueActivityTime)
-                    }
-                  />
+                        : "transition-all duration-200 ease-out",
+                    )}
+                  >
+                    <IssueRow
+                      issue={issue}
+                      issueLinkState={issueLinkState}
+                      selected={isSelected}
+                      desktopMetaLeading={
+                        <InboxIssueMetaLeading
+                          issue={issue}
+                          selected={isSelected}
+                          isLive={liveIssueIds.has(issue.id)}
+                        />
+                      }
+                      desktopTrailing={
+                        <>
+                          <InboxIssueSignalBadge signal={issueSignal} selected={isSelected} />
+                          {issueActorName ? (
+                            <span
+                              className={cn(
+                                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                                isSelected
+                                  ? "border-muted-foreground/30 bg-muted text-muted-foreground"
+                                  : "border-border bg-background text-foreground",
+                              )}
+                            >
+                              {issueActorName}
+                            </span>
+                          ) : null}
+                        </>
+                      }
+                      mobileMeta={
+                        `${issueSignalLabel} · ${timeAgo(issueActivityTime)}`
+                      }
+                      unreadState={
+                        isUnread ? "visible" : isFading ? "fading" : "hidden"
+                      }
+                      onMarkRead={() => markReadMutation.mutate(issue.id)}
+                      onArchive={
+                        canArchiveFromTab
+                          ? () => archiveIssueMutation.mutate(issue.id)
+                          : undefined
+                      }
+                      archiveDisabled={isArchiving || archiveIssueMutation.isPending}
+                      trailingMeta={
+                        timeAgo(issueActivityTime)
+                      }
+                    />
+                    {officeConversationPath ? (
+                      <div className="flex items-center justify-end px-3 pb-3 sm:px-4">
+                        <Link
+                          to={officeConversationPath}
+                          className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        >
+                          {isOfficeMeetingIssue(issue) ? "회의에서 열기" : "대화에서 열기"}
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
                 );
 
                 elements.push(wrapItem(`issue:${issue.id}`, isSelected, canArchiveFromTab ? (

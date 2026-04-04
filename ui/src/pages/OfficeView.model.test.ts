@@ -2,9 +2,15 @@ import type { Agent, Issue } from "@paperclipai/shared";
 import { describe, expect, it } from "vitest";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import {
+  createOfficeConversationPath,
   convertOfficeReferencePathToWindows,
   deriveOfficeAgentStates,
   hasOfficeReferencePathMismatch,
+  extractOfficeMeetingParticipantIds,
+  getOfficeConversationPreview,
+  isOfficeMeetingIssue,
+  listOfficeConversationIssues,
+  listOfficeMeetingIssues,
   normalizeOfficeReferencePathValue,
   pickOfficeConversationTarget,
   resolveOfficeViewGateState,
@@ -308,6 +314,90 @@ describe("pickOfficeConversationTarget", () => {
 
     expect(target.issue?.id).toBe("issue-open");
     expect(target.reason).toBe("priority_fallback");
+  });
+});
+
+describe("office conversation lists", () => {
+  it("lists visible issues assigned to the selected agent in activity order", () => {
+    const issues = listOfficeConversationIssues({
+      agentId: "agent-1",
+      issues: [
+        createIssue({
+          id: "issue-done",
+          assigneeAgentId: "agent-1",
+          status: "done",
+        }),
+        createIssue({
+          id: "issue-two",
+          assigneeAgentId: "agent-1",
+          status: "todo",
+          updatedAt: new Date("2026-04-03T00:03:00.000Z"),
+        }),
+        createIssue({
+          id: "issue-one",
+          assigneeAgentId: "agent-1",
+          status: "in_progress",
+          updatedAt: new Date("2026-04-03T00:01:00.000Z"),
+        }),
+        createIssue({
+          id: "issue-other-agent",
+          assigneeAgentId: "agent-2",
+          status: "in_progress",
+        }),
+      ],
+    });
+
+    expect(issues.map((issue) => issue.id)).toEqual(["issue-one", "issue-two"]);
+  });
+
+  it("recognizes and lists meeting issues by the embedded meeting format marker", () => {
+    const issues = listOfficeMeetingIssues([
+      createIssue({
+        id: "issue-direct",
+        description: "일반 협업 요청",
+        updatedAt: new Date("2026-04-03T00:01:00.000Z"),
+      }),
+      createIssue({
+        id: "issue-meeting",
+        description: "회의 컨텍스트\n- 회의 형식: 전체회의\n- 진행자: CEO",
+        updatedAt: new Date("2026-04-03T00:02:00.000Z"),
+      }),
+    ]);
+
+    expect(isOfficeMeetingIssue(issues[0]!)).toBe(true);
+    expect(issues.map((issue) => issue.id)).toEqual(["issue-meeting"]);
+  });
+
+  it("extracts meeting participant ids without duplicating the facilitator", () => {
+    const issue = createIssue({
+      assigneeAgentId: "agent-ceo",
+      description:
+        "회의 컨텍스트\n- 회의 형식: 전체회의\n- 진행자: [@CEO](agent://agent-ceo)\n- 참가자: [@CEO](agent://agent-ceo) [@CTO](agent://agent-cto) [@CMO](agent://agent-cmo)",
+    });
+
+    expect(extractOfficeMeetingParticipantIds(issue)).toEqual(["agent-cto", "agent-cmo"]);
+  });
+
+  it("builds a stable office conversation path with query params", () => {
+    expect(
+      createOfficeConversationPath({
+        mode: "direct",
+        agentId: "agent-1",
+        issueId: "issue-1",
+        projectId: "project-1",
+      }),
+    ).toBe("/office?mode=direct&agent=agent-1&issue=issue-1&project=project-1");
+  });
+
+  it("falls back to the issue title when there is no description preview", () => {
+    expect(
+      getOfficeConversationPreview(
+        createIssue({
+          title: "Preview title",
+          description: null,
+        }),
+      ),
+    ).toBe("Preview title");
   });
 });
 

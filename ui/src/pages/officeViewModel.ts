@@ -1,7 +1,8 @@
-import type { Agent, Issue } from "@paperclipai/shared";
+import { extractAgentMentionIds, type Agent, type Issue } from "@paperclipai/shared";
 import type { LiveRunForIssue } from "../api/heartbeats";
 
 export type OfficeZoneId = "command" | "desks" | "review" | "approval" | "recovery" | "lounge";
+export type OfficeConversationMode = "direct" | "meeting";
 
 export interface OfficePoint {
   x: number;
@@ -22,6 +23,12 @@ export type OfficeConversationTargetReason = "current_issue" | "selected_project
 export interface OfficeConversationTarget {
   issue: Issue | null;
   reason: OfficeConversationTargetReason | null;
+}
+
+export interface OfficeConversationSummary {
+  issue: Issue;
+  preview: string;
+  activityAtMs: number;
 }
 
 export type OfficeReferencePathMode = "manual" | "project";
@@ -147,6 +154,59 @@ function visibleIssues(issues: Issue[]): Issue[] {
   return issues
     .filter((issue) => !issue.hiddenAt && issue.status !== "done" && issue.status !== "cancelled")
     .sort(compareIssues);
+}
+
+function firstNonEmptyLine(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const line = value.split("\n").map((chunk) => chunk.trim()).find(Boolean);
+  return line ?? null;
+}
+
+export function getOfficeConversationPreview(issue: Issue): string {
+  return firstNonEmptyLine(issue.description) ?? issue.title;
+}
+
+export function officeIssueActivityTimestamp(issue: Issue): number {
+  const lastExternalCommentAt = issue.lastExternalCommentAt ? new Date(issue.lastExternalCommentAt).getTime() : 0;
+  if (Number.isFinite(lastExternalCommentAt) && lastExternalCommentAt > 0) return lastExternalCommentAt;
+  return new Date(issue.updatedAt).getTime();
+}
+
+export function listOfficeConversationIssues(params: {
+  issues: Issue[];
+  agentId: string;
+}): Issue[] {
+  return visibleIssues(params.issues).filter((issue) => issue.assigneeAgentId === params.agentId);
+}
+
+export function isOfficeMeetingIssue(issue: Issue): boolean {
+  return (issue.description ?? "").includes("회의 형식: 전체회의");
+}
+
+export function listOfficeMeetingIssues(issues: Issue[]): Issue[] {
+  return visibleIssues(issues)
+    .filter(isOfficeMeetingIssue)
+    .sort((a, b) => officeIssueActivityTimestamp(b) - officeIssueActivityTimestamp(a));
+}
+
+export function extractOfficeMeetingParticipantIds(issue: Issue): string[] {
+  const ids = extractAgentMentionIds(issue.description ?? "");
+  return issue.assigneeAgentId ? ids.filter((id) => id !== issue.assigneeAgentId) : ids;
+}
+
+export function createOfficeConversationPath(params: {
+  mode?: OfficeConversationMode;
+  agentId?: string | null;
+  issueId?: string | null;
+  projectId?: string | null;
+}): string {
+  const searchParams = new URLSearchParams();
+  if (params.mode) searchParams.set("mode", params.mode);
+  if (params.agentId) searchParams.set("agent", params.agentId);
+  if (params.issueId) searchParams.set("issue", params.issueId);
+  if (params.projectId) searchParams.set("project", params.projectId);
+  const search = searchParams.toString();
+  return `/office${search ? `?${search}` : ""}`;
 }
 
 export function pickOfficeConversationTarget(params: {
