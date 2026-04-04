@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@/lib/router";
-import type { ActivityEvent, Issue, Project } from "@paperclipai/shared";
+import { buildAgentMentionHref, type ActivityEvent, type Agent, type Issue, type Project } from "@paperclipai/shared";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -17,6 +17,7 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Users,
 } from "lucide-react";
 import { activityApi } from "../api/activity";
 import { agentsApi } from "../api/agents";
@@ -36,8 +37,10 @@ import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { agentUrl, cn, formatCents, formatStatusLabel, issueUrl, projectUrl, relativeTime } from "../lib/utils";
 import {
+  convertOfficeReferencePathToWindows,
   deriveOfficeAgentStates,
   hasOfficeReferencePathMismatch,
+  normalizeOfficeReferencePathValue,
   pickOfficeConversationTarget,
   resolveOfficeViewGateState,
   syncOfficeReferencePath,
@@ -76,6 +79,7 @@ const DESK_DECORATIONS = [
 ];
 
 const OFFICE_DRAFT_STORAGE_PREFIX = "paperclip:office-composer";
+type OfficeComposerMode = "direct" | "meeting";
 
 const OFFICE_MARKETING_TEMPLATES = [
   {
@@ -140,19 +144,25 @@ function officeDraftStorageKey(companyId: string | null) {
   return companyId ? `${OFFICE_DRAFT_STORAGE_PREFIX}:${companyId}` : null;
 }
 
-function defaultOfficeIssueTitle(agentName: string | null, projectName: string | null) {
+function defaultOfficeIssueTitle(
+  agentName: string | null,
+  projectName: string | null,
+  mode: OfficeComposerMode,
+) {
+  if (mode === "meeting") {
+    if (projectName) return `${projectName} 전체회의 요청`;
+    return "오피스 전체회의 요청";
+  }
   if (projectName && agentName) return `${projectName} 관련 ${agentName} 협업 요청`;
   if (projectName) return `${projectName} 협업 요청`;
   if (agentName) return `${agentName} 협업 요청`;
   return "오피스 협업 요청";
 }
 
-function buildOfficeMessageBody(input: {
-  body: string;
+function buildOfficeContextLines(input: {
   referencePath: string;
   project: Project | null;
 }) {
-  const main = input.body.trim();
   const project = input.project;
   const contextLines: string[] = [];
 
@@ -173,9 +183,47 @@ function buildOfficeMessageBody(input: {
     contextLines.push(`- 저장소: ${project.codebase.repoUrl}`);
   }
 
+  return contextLines;
+}
+
+function buildOfficeMessageBody(input: {
+  body: string;
+  referencePath: string;
+  project: Project | null;
+}) {
+  const main = input.body.trim();
+  const contextLines = buildOfficeContextLines(input);
+
   if (contextLines.length === 0) return main;
 
   return `${main}\n\n컨텍스트\n${contextLines.join("\n")}`;
+}
+
+function buildAgentMention(agent: Agent): string {
+  return `[@${agent.name}](${buildAgentMentionHref(agent.id, agent.icon ?? null)})`;
+}
+
+function buildOfficeMeetingBody(input: {
+  body: string;
+  referencePath: string;
+  project: Project | null;
+  facilitator: Agent | null;
+  participants: Agent[];
+}) {
+  const main = input.body.trim();
+  const allParticipants = input.facilitator
+    ? [input.facilitator, ...input.participants.filter((agent) => agent.id !== input.facilitator?.id)]
+    : input.participants;
+  const contextLines = [
+    "- 회의 형식: 전체회의",
+    input.facilitator ? `- 진행자: ${buildAgentMention(input.facilitator)}` : null,
+    allParticipants.length > 0
+      ? `- 참가자: ${allParticipants.map((agent) => buildAgentMention(agent)).join(" ")}`
+      : null,
+    ...buildOfficeContextLines(input),
+  ].filter((line): line is string => Boolean(line));
+
+  return `${main}\n\n회의 컨텍스트\n${contextLines.join("\n")}`;
 }
 
 function formatConversationTargetReason(reason: OfficeConversationTargetReason | null, hasLiveRun: boolean) {
@@ -198,13 +246,17 @@ export function OfficeView() {
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [composerMode, setComposerMode] = useState<OfficeComposerMode>("direct");
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [meetingParticipantIds, setMeetingParticipantIds] = useState<string[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [messageTitle, setMessageTitle] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [referencePath, setReferencePath] = useState("");
   const [referencePathMode, setReferencePathMode] = useState<OfficeReferencePathMode>("manual");
   const [lastTouchedIssueId, setLastTouchedIssueId] = useState<string | null>(null);
+  const messageDockRef = useRef<HTMLElement | null>(null);
+  const messageBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "오피스" }]);
@@ -285,7 +337,9 @@ export function OfficeView() {
     try {
       const raw = localStorage.getItem(draftStorageKey);
       if (!raw) {
+        setComposerMode("direct");
         setSelectedAgentId("");
+        setMeetingParticipantIds([]);
         setSelectedProjectId("");
         setMessageTitle("");
         setMessageBody("");
@@ -294,21 +348,31 @@ export function OfficeView() {
         return;
       }
       const parsed = JSON.parse(raw) as {
+        composerMode?: OfficeComposerMode;
         selectedAgentId?: string;
+        meetingParticipantIds?: string[];
         selectedProjectId?: string;
         messageTitle?: string;
         messageBody?: string;
         referencePath?: string;
         referencePathMode?: OfficeReferencePathMode;
       };
+      setComposerMode(parsed.composerMode === "meeting" ? "meeting" : "direct");
       setSelectedAgentId(parsed.selectedAgentId ?? "");
+      setMeetingParticipantIds(
+        Array.isArray(parsed.meetingParticipantIds)
+          ? parsed.meetingParticipantIds.filter((value): value is string => typeof value === "string")
+          : [],
+      );
       setSelectedProjectId(parsed.selectedProjectId ?? "");
       setMessageTitle(parsed.messageTitle ?? "");
       setMessageBody(parsed.messageBody ?? "");
       setReferencePath(parsed.referencePath ?? "");
       setReferencePathMode(parsed.referencePathMode === "project" ? "project" : "manual");
     } catch {
+      setComposerMode("direct");
       setSelectedAgentId("");
+      setMeetingParticipantIds([]);
       setSelectedProjectId("");
       setMessageTitle("");
       setMessageBody("");
@@ -323,7 +387,9 @@ export function OfficeView() {
       localStorage.setItem(
         draftStorageKey,
         JSON.stringify({
+          composerMode,
           selectedAgentId,
+          meetingParticipantIds,
           selectedProjectId,
           messageTitle,
           messageBody,
@@ -334,7 +400,17 @@ export function OfficeView() {
     } catch {
       // Ignore localStorage failures.
     }
-  }, [draftStorageKey, selectedAgentId, selectedProjectId, messageTitle, messageBody, referencePath, referencePathMode]);
+  }, [
+    composerMode,
+    draftStorageKey,
+    selectedAgentId,
+    meetingParticipantIds,
+    selectedProjectId,
+    messageTitle,
+    messageBody,
+    referencePath,
+    referencePathMode,
+  ]);
 
   const agentStates = useMemo(
     () => deriveOfficeAgentStates({ agents, issues, liveRuns, nowMs }),
@@ -347,11 +423,21 @@ export function OfficeView() {
   }, [agents, agentStates, selectedAgentId]);
 
   useEffect(() => {
+    setMeetingParticipantIds((current) =>
+      current.filter((agentId) => agentId !== selectedAgentId && agents.some((agent) => agent.id === agentId)),
+    );
+  }, [agents, selectedAgentId]);
+
+  useEffect(() => {
     if (selectedProjectId && projects.some((project) => project.id === selectedProjectId)) return;
     if (!selectedProjectId && projects.length !== 1) return;
     setSelectedProjectId(projects[0]?.id ?? "");
   }, [projects, selectedProjectId]);
 
+  const agentById = useMemo(
+    () => new Map(agents.map((agent) => [agent.id, agent])),
+    [agents],
+  );
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
   const selectedProjectPath =
     selectedProject?.codebase.localFolder ||
@@ -395,6 +481,29 @@ export function OfficeView() {
   const recentEvents = useMemo(() => activity.slice(0, 6), [activity]);
   const error = agentsQuery.error ?? issuesQuery.error ?? dashboardQuery.error ?? liveRunsQuery.error ?? activityQuery.error;
   const selectedAgentState = agentStates.find((state) => state.agent.id === selectedAgentId) ?? null;
+  const selectedMeetingParticipants = useMemo(
+    () =>
+      meetingParticipantIds
+        .map((agentId) => agentById.get(agentId) ?? null)
+        .filter((agent): agent is Agent => Boolean(agent)),
+    [agentById, meetingParticipantIds],
+  );
+  const meetingParticipants = useMemo(() => {
+    const resolved = [
+      selectedAgentState?.agent ?? null,
+      ...selectedMeetingParticipants,
+    ].filter((agent): agent is Agent => Boolean(agent));
+    const seen = new Set<string>();
+    return resolved.filter((agent) => {
+      if (seen.has(agent.id)) return false;
+      seen.add(agent.id);
+      return true;
+    });
+  }, [selectedAgentState?.agent, selectedMeetingParticipants]);
+  const otherAgents = useMemo(
+    () => agentStates.filter((state) => state.agent.id !== selectedAgentId),
+    [agentStates, selectedAgentId],
+  );
   const selectedConversationTarget = useMemo(
     () =>
       selectedAgentId
@@ -409,11 +518,30 @@ export function OfficeView() {
   );
   const selectedConversationIssue = selectedConversationTarget.issue;
   const resolvedMessageTitle =
-    messageTitle.trim() || defaultOfficeIssueTitle(selectedAgentState?.agent.name ?? null, selectedProject?.name ?? null);
+    messageTitle.trim() || defaultOfficeIssueTitle(
+      selectedAgentState?.agent.name ?? null,
+      selectedProject?.name ?? null,
+      composerMode,
+    );
+  const effectiveReferencePath = useMemo(
+    () => normalizeOfficeReferencePathValue(referencePath.trim() || selectedProjectPath),
+    [referencePath, selectedProjectPath],
+  );
+  const windowsReferencePath = useMemo(
+    () => convertOfficeReferencePathToWindows(effectiveReferencePath),
+    [effectiveReferencePath],
+  );
   const composedMessageBody = buildOfficeMessageBody({
     body: messageBody,
-    referencePath,
+    referencePath: effectiveReferencePath,
     project: selectedProject,
+  });
+  const composedMeetingBody = buildOfficeMeetingBody({
+    body: messageBody,
+    referencePath: effectiveReferencePath,
+    project: selectedProject,
+    facilitator: selectedAgentState?.agent ?? null,
+    participants: selectedMeetingParticipants,
   });
   const hasReferencePathMismatch = hasOfficeReferencePathMismatch({
     selectedProjectId: selectedProjectId || null,
@@ -429,6 +557,44 @@ export function OfficeView() {
   const clearComposer = () => {
     setMessageTitle("");
     setMessageBody("");
+  };
+
+  const copyTextValue = (value: string, title: string) => {
+    if (!navigator.clipboard?.writeText) {
+      pushToast({
+        title: "경로 복사에 실패했습니다",
+        body: "이 환경에서는 클립보드 복사를 지원하지 않습니다.",
+        tone: "error",
+      });
+      return;
+    }
+
+    navigator.clipboard.writeText(value)
+      .then(() => {
+        pushToast({ title, tone: "success" });
+      })
+      .catch((copyError) => {
+        pushToast({
+          title: "경로 복사에 실패했습니다",
+          body: copyError instanceof Error ? copyError.message : "브라우저가 클립보드 복사를 허용하지 않았습니다.",
+          tone: "error",
+        });
+      });
+  };
+
+  const focusMessageDock = () => {
+    messageDockRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => {
+      messageBodyRef.current?.focus();
+    }, 220);
+  };
+
+  const toggleMeetingParticipant = (agentId: string) => {
+    setMeetingParticipantIds((current) =>
+      current.includes(agentId)
+        ? current.filter((currentId) => currentId !== agentId)
+        : [...current, agentId],
+    );
   };
 
   const invalidateOfficeData = async (issueId?: string) => {
@@ -452,10 +618,13 @@ export function OfficeView() {
       if (!selectedCompanyId) throw new Error("회사를 먼저 선택하세요.");
       if (!selectedAgentId) throw new Error("에이전트를 먼저 선택하세요.");
       if (!messageBody.trim()) throw new Error("보낼 내용을 입력하세요.");
+      if (composerMode === "meeting" && meetingParticipants.length < 2) {
+        throw new Error("전체회의는 진행자를 포함해 두 명 이상을 선택해야 합니다.");
+      }
 
       return issuesApi.create(selectedCompanyId, {
         title: resolvedMessageTitle,
-        description: composedMessageBody,
+        description: composerMode === "meeting" ? composedMeetingBody : composedMessageBody,
         assigneeAgentId: selectedAgentId,
         ...(selectedProject ? { projectId: selectedProject.id } : {}),
         status: "todo",
@@ -467,7 +636,7 @@ export function OfficeView() {
       setLastTouchedIssueId(issue.id);
       clearComposer();
       pushToast({
-        title: "오피스 메시지를 새 이슈로 보냈습니다",
+        title: composerMode === "meeting" ? "전체회의 요청 이슈를 만들었습니다" : "오피스 메시지를 새 이슈로 보냈습니다",
         body: `${issue.identifier ?? issue.id.slice(0, 8)} ${issue.title}`,
         tone: "success",
         action: { label: "이슈 열기", href: issueUrl(issue) },
@@ -475,7 +644,7 @@ export function OfficeView() {
     },
     onError: (mutationError) => {
       pushToast({
-        title: "이슈 생성에 실패했습니다",
+        title: composerMode === "meeting" ? "전체회의 이슈 생성에 실패했습니다" : "이슈 생성에 실패했습니다",
         body: mutationError instanceof Error ? mutationError.message : "오피스 메시지를 이슈로 만들지 못했습니다.",
         tone: "error",
       });
@@ -632,6 +801,46 @@ export function OfficeView() {
           />
         </div>
       ) : null}
+
+      <section className="sticky top-3 z-10 rounded-[24px] border border-cyan-400/20 bg-background/92 px-4 py-4 shadow-[0_18px_40px_rgba(0,0,0,0.16)] backdrop-blur supports-[backdrop-filter]:bg-background/85">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-cyan-100">
+              <MessageSquare className="h-3.5 w-3.5" />
+              메시지 독 바로가기
+            </div>
+            <p className="text-sm text-foreground">
+              {selectedAgentState
+                ? composerMode === "meeting"
+                  ? `${selectedAgentState.agent.name}를 진행자로 전체회의를 준비할 수 있습니다.`
+                  : `${selectedAgentState.agent.name}에게 바로 지시를 보낼 수 있습니다.`
+                : "에이전트를 선택하면 바로 메시지를 보낼 수 있습니다."}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {selectedProject
+                ? composerMode === "meeting"
+                  ? `${selectedProject.name} 프로젝트 기준 안건과 참가자를 묶어 회의 이슈로 만들 수 있습니다.`
+                  : `${selectedProject.name} 프로젝트 컨텍스트와 경로를 함께 붙여 보낼 수 있습니다.`
+                : "프로젝트를 고르면 장사톡 같은 실제 코드베이스 경로를 같이 붙여 보낼 수 있습니다."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={focusMessageDock}>
+              <MessageSquare className="mr-1 h-3.5 w-3.5" />
+              메시지 독 열기
+            </Button>
+            {selectedConversationIssue ? (
+              <Link
+                to={issueUrl(selectedConversationIssue)}
+                className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
+              >
+                현재 작업 보기
+                <ArrowUpRight className="h-4 w-4" />
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.75fr)_23rem]">
         <section className="overflow-hidden rounded-[30px] border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.18)]">
@@ -835,7 +1044,11 @@ export function OfficeView() {
         </aside>
       </div>
 
-      <section className="rounded-[30px] border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.14)]">
+      <section
+        id="office-message-dock"
+        ref={messageDockRef}
+        className="rounded-[30px] border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.14)]"
+      >
         <div className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
             <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
@@ -845,7 +1058,7 @@ export function OfficeView() {
             <h2 className="text-sm font-semibold text-foreground">오피스 메시지 독</h2>
             <p className="max-w-3xl text-xs text-muted-foreground">
               선택한 에이전트에게 새 업무를 보내거나, 지금 진행 중인 이슈에 바로 코멘트를 남길 수 있습니다.
-              프로젝트 경로와 저장소 정보도 함께 실어 보내도록 맞춰뒀습니다.
+              전체회의 모드에서는 진행자 1명을 정하고, 나머지 참가자를 멘션으로 함께 초대합니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -855,6 +1068,7 @@ export function OfficeView() {
                 size="sm"
                 onClick={() => {
                   setReferencePath(selectedProjectPath);
+                  setReferencePathMode("project");
                   pushToast({ title: "프로젝트 경로를 메시지에 채웠습니다", tone: "success" });
                 }}
               >
@@ -882,7 +1096,44 @@ export function OfficeView() {
           <div className="space-y-5">
             <div className="space-y-2">
               <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                대상 에이전트
+                작업 방식
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setComposerMode("direct")}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-xs font-medium transition-colors",
+                    composerMode === "direct"
+                      ? "border-cyan-400/50 bg-cyan-400/10 text-foreground"
+                      : "border-border bg-background text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                  )}
+                >
+                  개별 지시
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComposerMode("meeting")}
+                  className={cn(
+                    "rounded-full border px-3 py-2 text-xs font-medium transition-colors",
+                    composerMode === "meeting"
+                      ? "border-cyan-400/50 bg-cyan-400/10 text-foreground"
+                      : "border-border bg-background text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                  )}
+                >
+                  전체회의
+                </button>
+              </div>
+              {composerMode === "meeting" ? (
+                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
+                  현재 버전에서는 진행자 1명에게 이슈를 할당하고, 다른 참가자는 멘션으로 초대합니다.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                {composerMode === "meeting" ? "회의 진행자" : "대상 에이전트"}
               </div>
               <div className="flex flex-wrap gap-2">
                 {agentStates.map((state) => (
@@ -910,6 +1161,67 @@ export function OfficeView() {
                 ))}
               </div>
             </div>
+
+            {composerMode === "meeting" ? (
+              <div className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    회의 참가자
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={otherAgents.length === 0}
+                      onClick={() => setMeetingParticipantIds(otherAgents.map((state) => state.agent.id))}
+                    >
+                      전체 초대
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={meetingParticipantIds.length === 0}
+                      onClick={() => setMeetingParticipantIds([])}
+                    >
+                      선택 해제
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {otherAgents.map((state) => {
+                    const selected = meetingParticipantIds.includes(state.agent.id);
+                    return (
+                      <button
+                        key={state.agent.id}
+                        type="button"
+                        onClick={() => toggleMeetingParticipant(state.agent.id)}
+                        className={cn(
+                          "rounded-2xl border px-3 py-2 text-left transition-colors",
+                          selected
+                            ? "border-cyan-400/50 bg-cyan-400/10 text-foreground"
+                            : "border-border bg-background text-foreground hover:bg-accent/60",
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{state.agent.name}</span>
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                            {state.agent.role}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {selected ? "회의에 초대됨" : "클릭하면 회의에 초대"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="rounded-2xl border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                  {meetingParticipants.length >= 2
+                    ? `현재 ${meetingParticipants.map((agent) => agent.name).join(", ")} 참여 예정`
+                    : "전체회의는 진행자를 포함해 최소 두 명 이상이 필요합니다."}
+                </div>
+              </div>
+            ) : null}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
               <label className="space-y-2">
@@ -940,6 +1252,7 @@ export function OfficeView() {
                   placeholder={defaultOfficeIssueTitle(
                     selectedAgentState?.agent.name ?? null,
                     selectedProject?.name ?? null,
+                    composerMode,
                   )}
                 />
               </label>
@@ -988,34 +1301,26 @@ export function OfficeView() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={!referencePath.trim() && !selectedProjectPath}
+                  disabled={!effectiveReferencePath}
                   onClick={() => {
-                    const valueToCopy = referencePath.trim() || selectedProjectPath;
-                    if (!valueToCopy) return;
-                    if (!navigator.clipboard?.writeText) {
-                      pushToast({
-                        title: "경로 복사에 실패했습니다",
-                        body: "이 환경에서는 클립보드 복사를 지원하지 않습니다.",
-                        tone: "error",
-                      });
-                      return;
-                    }
-
-                    navigator.clipboard.writeText(valueToCopy)
-                      .then(() => {
-                        pushToast({ title: "경로를 복사했습니다", tone: "success" });
-                      })
-                      .catch((copyError) => {
-                        pushToast({
-                          title: "경로 복사에 실패했습니다",
-                          body: copyError instanceof Error ? copyError.message : "브라우저가 클립보드 복사를 허용하지 않았습니다.",
-                          tone: "error",
-                        });
-                      });
+                    if (!effectiveReferencePath) return;
+                    copyTextValue(effectiveReferencePath, "WSL 경로를 복사했습니다");
                   }}
                 >
                   <Copy className="mr-1 h-3.5 w-3.5" />
-                  경로 복사
+                  WSL 경로 복사
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!windowsReferencePath}
+                  onClick={() => {
+                    if (!windowsReferencePath) return;
+                    copyTextValue(windowsReferencePath, "Windows 경로를 복사했습니다");
+                  }}
+                >
+                  <Copy className="mr-1 h-3.5 w-3.5" />
+                  Windows 경로 복사
                 </Button>
                 <Button
                   variant="ghost"
@@ -1030,6 +1335,13 @@ export function OfficeView() {
                 </Button>
               </div>
             </div>
+
+            {referencePathMode === "manual" && referencePath.trim() ? (
+              <div className="rounded-2xl border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                참고 경로는 WSL 기준으로 정규화되어 전송됩니다.
+                {windowsReferencePath ? ` 필요하면 Windows 경로(${windowsReferencePath})로도 다시 복사할 수 있습니다.` : ""}
+              </div>
+            ) : null}
 
             {referencePathMode === "project" && selectedProject ? (
               <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 px-3 py-2 text-xs text-cyan-100">
@@ -1052,30 +1364,43 @@ export function OfficeView() {
                 메시지 본문
               </span>
               <Textarea
+                ref={messageBodyRef}
                 value={messageBody}
                 onChange={(event) => setMessageBody(event.target.value)}
                 className="min-h-[180px]"
-                placeholder="예: 장사톡 프로젝트를 보고 첫 홍보 전략, 타깃 고객, 실험 채널, 필요한 자료를 정리해주세요."
+                placeholder={
+                  composerMode === "meeting"
+                    ? "예: 장사톡 프로젝트를 기준으로 CEO, CTO, CMO가 함께 논의할 안건과 원하는 결과물을 정리해주세요."
+                    : "예: 장사톡 프로젝트를 보고 첫 홍보 전략, 타깃 고객, 실험 채널, 필요한 자료를 정리해주세요."
+                }
               />
             </label>
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                disabled={!selectedConversationIssue || !messageBody.trim() || createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
-                onClick={() => commentOnSelectedIssue.mutate()}
-              >
-                <MessageSquare className="mr-1 h-3.5 w-3.5" />
-                현재 작업에 코멘트
-              </Button>
+              {composerMode === "direct" ? (
+                <Button
+                  size="sm"
+                  disabled={!selectedConversationIssue || !messageBody.trim() || createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
+                  onClick={() => commentOnSelectedIssue.mutate()}
+                >
+                  <MessageSquare className="mr-1 h-3.5 w-3.5" />
+                  현재 작업에 코멘트
+                </Button>
+              ) : null}
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!selectedAgentId || !messageBody.trim() || createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
+                disabled={
+                  !selectedAgentId ||
+                  !messageBody.trim() ||
+                  createIssueFromOffice.isPending ||
+                  commentOnSelectedIssue.isPending ||
+                  (composerMode === "meeting" && meetingParticipants.length < 2)
+                }
                 onClick={() => createIssueFromOffice.mutate()}
               >
                 <Send className="mr-1 h-3.5 w-3.5" />
-                새 이슈로 보내기
+                {composerMode === "meeting" ? "회의 이슈 만들기" : "새 이슈로 보내기"}
               </Button>
               {(createIssueFromOffice.isPending || commentOnSelectedIssue.isPending) ? (
                 <span className="inline-flex items-center rounded-full bg-muted px-3 py-2 text-xs text-muted-foreground">
@@ -1096,9 +1421,15 @@ export function OfficeView() {
 
           <div className="space-y-4">
             <OfficeDockCard
-              title="선택한 에이전트"
+              title={composerMode === "meeting" ? "회의 진행자" : "선택한 에이전트"}
               icon={Bot}
-              description={selectedAgentState ? "지금 이 에이전트에게 바로 말을 거는 중입니다." : "먼저 에이전트를 선택하세요."}
+              description={
+                selectedAgentState
+                  ? composerMode === "meeting"
+                    ? "지금 이 에이전트가 회의를 진행하도록 지정되어 있습니다."
+                    : "지금 이 에이전트에게 바로 말을 거는 중입니다."
+                  : "먼저 에이전트를 선택하세요."
+              }
             >
               {selectedAgentState ? (
                 <div className="space-y-2 text-sm">
@@ -1119,11 +1450,26 @@ export function OfficeView() {
             </OfficeDockCard>
 
             <OfficeDockCard
-              title="코멘트 대상"
-              icon={MessageSquare}
-              description="현재 작업이 있으면 여기에 코멘트를 붙이고, 없으면 새 이슈를 만드는 흐름입니다."
+              title={composerMode === "meeting" ? "회의 초대 상태" : "코멘트 대상"}
+              icon={composerMode === "meeting" ? Users : MessageSquare}
+              description={
+                composerMode === "meeting"
+                  ? "회의 진행자 1명과 참가자 멘션으로 전체회의 이슈를 만드는 흐름입니다."
+                  : "현재 작업이 있으면 여기에 코멘트를 붙이고, 없으면 새 이슈를 만드는 흐름입니다."
+              }
             >
-              {selectedConversationIssue ? (
+              {composerMode === "meeting" ? (
+                <div className="space-y-3">
+                  <div className="rounded-2xl border border-border bg-background/70 px-3 py-3 text-sm text-foreground">
+                    {meetingParticipants.length >= 2
+                      ? meetingParticipants.map((agent) => agent.name).join(", ")
+                      : "진행자를 포함해 최소 두 명 이상을 선택하면 전체회의 이슈를 만들 수 있습니다."}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    현재 버전은 단일 담당자 모델을 유지하므로, 진행자는 한 명만 지정되고 나머지는 멘션으로 초대됩니다.
+                  </div>
+                </div>
+              ) : selectedConversationIssue ? (
                 <Link
                   to={issueUrl(selectedConversationIssue)}
                   className="block rounded-2xl border border-border bg-background/70 px-3 py-3 transition-colors hover:bg-accent/60"

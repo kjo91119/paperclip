@@ -2,8 +2,10 @@ import type { Agent, Issue } from "@paperclipai/shared";
 import { describe, expect, it } from "vitest";
 import type { LiveRunForIssue } from "../api/heartbeats";
 import {
+  convertOfficeReferencePathToWindows,
   deriveOfficeAgentStates,
   hasOfficeReferencePathMismatch,
+  normalizeOfficeReferencePathValue,
   pickOfficeConversationTarget,
   resolveOfficeViewGateState,
   syncOfficeReferencePath,
@@ -337,7 +339,7 @@ describe("syncOfficeReferencePath", () => {
         mode: "manual",
         selectedProjectPath: "/repo-b",
       }),
-    ).toBe("C:\\Users\\frog5\\Desktop\\custom-notes");
+    ).toBe("/mnt/c/Users/frog5/Desktop/custom-notes");
   });
 });
 
@@ -362,5 +364,34 @@ describe("hasOfficeReferencePathMismatch", () => {
         mode: "project",
       }),
     ).toBe(false);
+  });
+
+  it("does not warn when a Windows path points to the same project folder", () => {
+    expect(
+      hasOfficeReferencePathMismatch({
+        selectedProjectId: "project-b",
+        selectedProjectPath: "/mnt/c/Users/frog5/Desktop/sites/jangsatok",
+        referencePath: "C:\\Users\\frog5\\Desktop\\sites\\jangsatok",
+        mode: "manual",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("reference path normalization", () => {
+  it("converts Windows drive paths into WSL mount paths", () => {
+    expect(
+      normalizeOfficeReferencePathValue("C:\\Users\\frog5\\Desktop\\사이트만들기\\클로드1\\projects\\02-jangsatok"),
+    ).toBe("/mnt/c/Users/frog5/Desktop/사이트만들기/클로드1/projects/02-jangsatok");
+  });
+
+  it("converts WSL mount paths back into Windows paths when possible", () => {
+    expect(
+      convertOfficeReferencePathToWindows("/mnt/c/Users/frog5/Desktop/sites/jangsatok"),
+    ).toBe("C:\\Users\\frog5\\Desktop\\sites\\jangsatok");
+  });
+
+  it("leaves non-mounted Linux paths without a Windows conversion", () => {
+    expect(convertOfficeReferencePathToWindows("/home/junoh/projects/jangsatok")).toBeNull();
   });
 });

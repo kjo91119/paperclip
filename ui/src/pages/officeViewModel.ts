@@ -26,6 +26,10 @@ export interface OfficeConversationTarget {
 
 export type OfficeReferencePathMode = "manual" | "project";
 
+const WINDOWS_DRIVE_PATH_RE = /^([a-zA-Z]):[\\/]*(.*)$/;
+const WSL_MOUNT_PATH_RE = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/;
+const WSL_UNC_PATH_RE = /^\\\\wsl\$\\[^\\]+\\(.*)$/i;
+
 export type OfficeViewGateState =
   | "needs_company_onboarding"
   | "needs_company_selection"
@@ -185,13 +189,52 @@ export function pickOfficeConversationIssue(params: {
   return pickOfficeConversationTarget(params).issue;
 }
 
+function normalizeSlashPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/\/+/g, "/");
+}
+
+export function normalizeOfficeReferencePathValue(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "";
+
+  const uncMatch = trimmed.match(WSL_UNC_PATH_RE);
+  if (uncMatch) {
+    const uncBody = normalizeSlashPath(uncMatch[1] ?? "");
+    return uncBody.startsWith("/") ? uncBody : `/${uncBody}`;
+  }
+
+  const windowsMatch = trimmed.match(WINDOWS_DRIVE_PATH_RE);
+  if (windowsMatch) {
+    const drive = windowsMatch[1]!.toLowerCase();
+    const remainder = normalizeSlashPath(windowsMatch[2] ?? "").replace(/^\/+/, "");
+    return remainder ? `/mnt/${drive}/${remainder}` : `/mnt/${drive}`;
+  }
+
+  if (trimmed.startsWith("/mnt/")) {
+    return normalizeSlashPath(trimmed);
+  }
+
+  return trimmed;
+}
+
+export function convertOfficeReferencePathToWindows(path: string): string | null {
+  const normalized = normalizeOfficeReferencePathValue(path);
+  const match = normalized.match(WSL_MOUNT_PATH_RE);
+  if (!match) return null;
+  const drive = match[1]!.toUpperCase();
+  const remainder = (match[2] ?? "").replaceAll("/", "\\");
+  return remainder ? `${drive}:\\${remainder}` : `${drive}:\\`;
+}
+
 export function syncOfficeReferencePath(params: {
   referencePath: string;
   mode: OfficeReferencePathMode;
   selectedProjectPath?: string | null;
 }): string {
-  if (params.mode !== "project") return params.referencePath;
-  return params.selectedProjectPath?.trim() ?? "";
+  if (params.mode !== "project") {
+    return normalizeOfficeReferencePathValue(params.referencePath);
+  }
+  return normalizeOfficeReferencePathValue(params.selectedProjectPath?.trim() ?? "");
 }
 
 export function hasOfficeReferencePathMismatch(params: {
@@ -200,8 +243,8 @@ export function hasOfficeReferencePathMismatch(params: {
   referencePath: string;
   mode: OfficeReferencePathMode;
 }): boolean {
-  const selectedProjectPath = params.selectedProjectPath?.trim() ?? "";
-  const referencePath = params.referencePath.trim();
+  const selectedProjectPath = normalizeOfficeReferencePathValue(params.selectedProjectPath?.trim() ?? "");
+  const referencePath = normalizeOfficeReferencePathValue(params.referencePath);
   if (!params.selectedProjectId || !selectedProjectPath || !referencePath) return false;
   if (params.mode === "project") return false;
   return referencePath !== selectedProjectPath;
