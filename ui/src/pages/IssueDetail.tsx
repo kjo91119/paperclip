@@ -25,7 +25,7 @@ import {
   type OptimisticIssueComment,
 } from "../lib/optimistic-issue-comments";
 import { useProjectOrder } from "../hooks/useProjectOrder";
-import { relativeTime, cn, formatTokens, visibleRunCostUsd } from "../lib/utils";
+import { relativeTime, cn, formatPriorityLabel, formatStatusLabel, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
@@ -99,11 +99,6 @@ const ACTION_LABELS: Record<string, string> = {
   "approval.rejected": "거절했습니다",
 };
 
-function humanizeValue(value: unknown): string {
-  if (typeof value !== "string") return String(value ?? "none");
-  return value.replace(/_/g, " ");
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -162,27 +157,27 @@ function formatAction(action: string, details?: Record<string, unknown> | null):
       const from = previous.status;
       parts.push(
         from
-          ? `changed the status from ${humanizeValue(from)} to ${humanizeValue(details.status)}`
-          : `changed the status to ${humanizeValue(details.status)}`
+          ? `상태를 ${formatStatusLabel(String(from))}에서 ${formatStatusLabel(String(details.status))}로 변경했습니다`
+          : `상태를 ${formatStatusLabel(String(details.status))}로 변경했습니다`
       );
     }
     if (details.priority !== undefined) {
       const from = previous.priority;
       parts.push(
         from
-          ? `changed the priority from ${humanizeValue(from)} to ${humanizeValue(details.priority)}`
-          : `changed the priority to ${humanizeValue(details.priority)}`
+          ? `우선순위를 ${formatPriorityLabel(String(from))}에서 ${formatPriorityLabel(String(details.priority))}로 변경했습니다`
+          : `우선순위를 ${formatPriorityLabel(String(details.priority))}로 변경했습니다`
       );
     }
     if (details.assigneeAgentId !== undefined || details.assigneeUserId !== undefined) {
       parts.push(
         details.assigneeAgentId || details.assigneeUserId
-          ? "assigned the issue"
-          : "unassigned the issue",
+          ? "담당자를 지정했습니다"
+          : "담당자를 해제했습니다",
       );
     }
-    if (details.title !== undefined) parts.push("updated the title");
-    if (details.description !== undefined) parts.push("updated the description");
+    if (details.title !== undefined) parts.push("제목을 수정했습니다");
+    if (details.description !== undefined) parts.push("설명을 수정했습니다");
 
     if (parts.length > 0) return parts.join(", ");
   }
@@ -203,9 +198,9 @@ function ActorIdentity({ evt, agentMap }: { evt: ActivityEvent; agentMap: Map<st
     const agent = agentMap.get(id);
     return <Identity name={agent?.name ?? id.slice(0, 8)} size="sm" />;
   }
-  if (evt.actorType === "system") return <Identity name="System" size="sm" />;
-  if (evt.actorType === "user") return <Identity name="Board" size="sm" />;
-  return <Identity name={id || "Unknown"} size="sm" />;
+  if (evt.actorType === "system") return <Identity name="시스템" size="sm" />;
+  if (evt.actorType === "user") return <Identity name="보드" size="sm" />;
+  return <Identity name={id || "알 수 없음"} size="sm" />;
 }
 
 export function IssueDetail() {
@@ -292,7 +287,7 @@ export function IssueDetail() {
     [activeRun, liveRuns],
   );
   const sourceBreadcrumb = useMemo(
-    () => readIssueDetailBreadcrumb(location.state, location.search) ?? { label: "Issues", href: "/issues" },
+    () => readIssueDetailBreadcrumb(location.state, location.search) ?? { label: "이슈", href: "/issues" },
     [location.state, location.search],
   );
 
@@ -397,7 +392,7 @@ export function IssueDetail() {
       options.push({ id: `agent:${agent.id}`, label: agent.name });
     }
     if (currentUserId) {
-      options.push({ id: `user:${currentUserId}`, label: "Me" });
+      options.push({ id: `user:${currentUserId}`, label: "나" });
     }
     return options;
   }, [agents, currentUserId]);
@@ -605,8 +600,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: "Comment failed",
-        body: err instanceof Error ? err.message : "Unable to post comment",
+        title: "댓글 등록 실패",
+        body: err instanceof Error ? err.message : "댓글을 등록하지 못했습니다.",
         tone: "error",
       });
     },
@@ -693,8 +688,8 @@ export function IssueDetail() {
         queryClient.setQueryData(queryKeys.issues.detail(issueId!), context.previousIssue);
       }
       pushToast({
-        title: "Comment failed",
-        body: err instanceof Error ? err.message : "Unable to post comment",
+        title: "댓글 등록 실패",
+        body: err instanceof Error ? err.message : "댓글을 등록하지 못했습니다.",
         tone: "error",
       });
     },
@@ -709,15 +704,15 @@ export function IssueDetail() {
     onSuccess: () => {
       invalidateIssue();
       pushToast({
-        title: "Interrupt requested",
-        body: "The active run is stopping so queued comments can continue next.",
+        title: "중단을 요청했습니다",
+        body: "현재 실행을 멈추고 대기 중인 댓글을 이어서 처리할 수 있도록 준비합니다.",
         tone: "success",
       });
     },
     onError: (err) => {
       pushToast({
-        title: "Interrupt failed",
-        body: err instanceof Error ? err.message : "Unable to interrupt the active run",
+        title: "중단 요청 실패",
+        body: err instanceof Error ? err.message : "현재 실행을 중단하지 못했습니다.",
         tone: "error",
       });
     },
@@ -734,7 +729,7 @@ export function IssueDetail() {
       invalidateIssue();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Upload failed");
+      setAttachmentError(err instanceof Error ? err.message : "업로드에 실패했습니다.");
     },
   });
 
@@ -758,7 +753,7 @@ export function IssueDetail() {
       invalidateIssue();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Document import failed");
+      setAttachmentError(err instanceof Error ? err.message : "문서를 가져오지 못했습니다.");
     },
   });
 
@@ -770,12 +765,12 @@ export function IssueDetail() {
       invalidateIssue();
     },
     onError: (err) => {
-      setAttachmentError(err instanceof Error ? err.message : "Delete failed");
+      setAttachmentError(err instanceof Error ? err.message : "삭제에 실패했습니다.");
     },
   });
 
   useEffect(() => {
-    const titleLabel = issue?.title ?? issueId ?? "Issue";
+    const titleLabel = issue?.title ?? issueId ?? "이슈";
     setBreadcrumbs([
       sourceBreadcrumb,
       { label: hasLiveRuns ? `🔵 ${titleLabel}` : titleLabel },
@@ -820,11 +815,11 @@ export function IssueDetail() {
     const md = `# ${issue.identifier}: ${title}\n\n${body}`.trimEnd();
     await navigator.clipboard.writeText(md);
     setCopied(true);
-    pushToast({ title: "Copied to clipboard", tone: "success" });
+    pushToast({ title: "클립보드에 복사했습니다", tone: "success" });
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
+  if (isLoading) return <p className="text-sm text-muted-foreground">불러오는 중...</p>;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
 
@@ -1189,7 +1184,7 @@ export function IssueDetail() {
                 <a href={attachment.contentPath} target="_blank" rel="noreferrer">
                   <img
                     src={attachment.contentPath}
-                    alt={attachment.originalFilename ?? "attachment"}
+                    alt={attachment.originalFilename ?? "첨부 이미지"}
                     className="mt-2 max-h-56 rounded border border-border object-contain bg-accent/10"
                     loading="lazy"
                   />

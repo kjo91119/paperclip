@@ -1,6 +1,6 @@
 import { DollarSign } from "lucide-react";
 
-export function BudgetSidebarMarker({ title = "Paused by budget" }: { title?: string }) {
+export function BudgetSidebarMarker({ title = "예산으로 일시중지됨" }: { title?: string }) {
   return (
     <span
       title={title}

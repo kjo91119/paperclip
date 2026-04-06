@@ -19,7 +19,21 @@ function parseDollarInput(value: string) {
 }
 
 function windowLabel(windowKind: BudgetPolicySummary["windowKind"]) {
-  return windowKind === "lifetime" ? "Lifetime budget" : "Monthly UTC budget";
+  return windowKind === "lifetime" ? "전체 기간 예산" : "월간 UTC 예산";
+}
+
+function scopeTypeLabel(scopeType: BudgetPolicySummary["scopeType"]) {
+  if (scopeType === "company") return "회사";
+  if (scopeType === "project") return "프로젝트";
+  if (scopeType === "agent") return "에이전트";
+  return scopeType;
+}
+
+function statusLabel(summary: BudgetPolicySummary) {
+  if (summary.paused) return "일시중지";
+  if (summary.status === "warning") return "경고";
+  if (summary.status === "hard_stop") return "강제 중지";
+  return "정상";
 }
 
 function statusTone(status: BudgetPolicySummary["status"]) {
@@ -56,38 +70,38 @@ export function BudgetPolicyCard({
   const observedBudgetGrid = isPlain ? (
     <div className="grid gap-6 sm:grid-cols-2">
       <div>
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Observed</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">사용 금액</div>
         <div className="mt-2 text-xl font-semibold tabular-nums">{formatCents(summary.observedAmount)}</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {summary.amount > 0 ? `${summary.utilizationPercent}% of limit` : "No cap configured"}
+          {summary.amount > 0 ? `한도 대비 ${summary.utilizationPercent}%` : "상한 없음"}
         </div>
       </div>
       <div>
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Budget</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">예산</div>
         <div className="mt-2 text-xl font-semibold tabular-nums">
-          {summary.amount > 0 ? formatCents(summary.amount) : "Disabled"}
+          {summary.amount > 0 ? formatCents(summary.amount) : "비활성화"}
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Soft alert at {summary.warnPercent}%{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} pause` : ""}
+          {summary.warnPercent}%에서 경고{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} 일시중지` : ""}
         </div>
       </div>
     </div>
   ) : (
     <div className="grid gap-3 sm:grid-cols-2">
       <div className="rounded-xl border border-border/70 bg-black/[0.18] px-4 py-3">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Observed</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">사용 금액</div>
         <div className="mt-2 text-xl font-semibold tabular-nums">{formatCents(summary.observedAmount)}</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          {summary.amount > 0 ? `${summary.utilizationPercent}% of limit` : "No cap configured"}
+          {summary.amount > 0 ? `한도 대비 ${summary.utilizationPercent}%` : "상한 없음"}
         </div>
       </div>
       <div className="rounded-xl border border-border/70 bg-black/[0.18] px-4 py-3">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Budget</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">예산</div>
         <div className="mt-2 text-xl font-semibold tabular-nums">
-          {summary.amount > 0 ? formatCents(summary.amount) : "Disabled"}
+          {summary.amount > 0 ? formatCents(summary.amount) : "비활성화"}
         </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          Soft alert at {summary.warnPercent}%{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} pause` : ""}
+          {summary.warnPercent}%에서 경고{summary.paused && summary.pauseReason ? ` · ${summary.pauseReason} 일시중지` : ""}
         </div>
       </div>
     </div>
@@ -96,8 +110,8 @@ export function BudgetPolicyCard({
   const progressSection = (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>Remaining</span>
-        <span>{summary.amount > 0 ? formatCents(summary.remainingAmount) : "Unlimited"}</span>
+        <span>남은 예산</span>
+        <span>{summary.amount > 0 ? formatCents(summary.remainingAmount) : "무제한"}</span>
       </div>
       <div className={cn("h-2 overflow-hidden rounded-full", isPlain ? "bg-border/70" : "bg-muted/70")}>
         <div
@@ -120,8 +134,8 @@ export function BudgetPolicyCard({
       <PauseCircle className="mt-0.5 h-4 w-4 shrink-0" />
       <div>
         {summary.scopeType === "project"
-          ? "Execution is paused for this project until the budget is raised or the incident is dismissed."
-          : "Heartbeats are paused for this scope until the budget is raised or the incident is dismissed."}
+          ? "예산을 늘리거나 사고를 해제할 때까지 이 프로젝트의 실행이 일시중지됩니다."
+          : "예산을 늘리거나 사고를 해제할 때까지 이 범위의 하트비트가 일시중지됩니다."}
       </div>
     </div>
   ) : null;
@@ -130,7 +144,7 @@ export function BudgetPolicyCard({
     <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-end", isPlain ? "" : "rounded-xl border border-border/70 bg-background/50 p-3")}>
       <div className="min-w-0 flex-1">
         <label className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Budget (USD)
+          예산 (USD)
         </label>
         <Input
           value={draftBudget}
@@ -146,7 +160,7 @@ export function BudgetPolicyCard({
         }}
         disabled={!canSave || isSaving || parsedDraft === null}
       >
-        {isSaving ? "Saving..." : summary.amount > 0 ? "Update budget" : "Set budget"}
+        {isSaving ? "저장 중..." : summary.amount > 0 ? "예산 수정" : "예산 설정"}
       </Button>
     </div>
   ) : null;
@@ -157,7 +171,7 @@ export function BudgetPolicyCard({
         <div className="flex items-start justify-between gap-6">
           <div>
             <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              {summary.scopeType}
+              {scopeTypeLabel(summary.scopeType)}
             </div>
             <div className="mt-2 text-xl font-semibold">{summary.scopeName}</div>
             <div className="mt-2 text-sm text-muted-foreground">{windowLabel(summary.windowKind)}</div>
@@ -173,7 +187,7 @@ export function BudgetPolicyCard({
             )}
           >
             <StatusIcon className="h-3.5 w-3.5" />
-            {summary.paused ? "Paused" : summary.status === "warning" ? "Warning" : summary.status === "hard_stop" ? "Hard stop" : "Healthy"}
+            {statusLabel(summary)}
           </div>
         </div>
 
@@ -182,7 +196,7 @@ export function BudgetPolicyCard({
         {pausedPane}
         {saveSection}
         {parsedDraft === null ? (
-          <p className="text-xs text-destructive">Enter a valid non-negative dollar amount.</p>
+          <p className="text-xs text-destructive">0 이상의 올바른 달러 금액을 입력해 주세요.</p>
         ) : null}
       </div>
     );
@@ -194,14 +208,14 @@ export function BudgetPolicyCard({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
-              {summary.scopeType}
+              {scopeTypeLabel(summary.scopeType)}
             </div>
             <CardTitle className="mt-1 text-base">{summary.scopeName}</CardTitle>
             <CardDescription className="mt-1">{windowLabel(summary.windowKind)}</CardDescription>
           </div>
           <div className={cn("inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.18em]", statusTone(summary.status))}>
             <StatusIcon className="h-3.5 w-3.5" />
-            {summary.paused ? "Paused" : summary.status === "warning" ? "Warning" : summary.status === "hard_stop" ? "Hard stop" : "Healthy"}
+            {statusLabel(summary)}
           </div>
         </div>
       </CardHeader>
@@ -211,7 +225,7 @@ export function BudgetPolicyCard({
         {pausedPane}
         {saveSection}
         {parsedDraft === null ? (
-          <p className="text-xs text-destructive">Enter a valid non-negative dollar amount.</p>
+          <p className="text-xs text-destructive">0 이상의 올바른 달러 금액을 입력해 주세요.</p>
         ) : null}
       </CardContent>
     </Card>

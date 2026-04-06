@@ -41,14 +41,14 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
 
   const items = useMemo<MobileNavItem[]>(
     () => [
-      { type: "link", to: "/dashboard", label: "Home", icon: House },
-      { type: "link", to: "/issues", label: "Issues", icon: CircleDot },
-      { type: "action", label: "Create", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/agents/all", label: "Agents", icon: Users },
+      { type: "link", to: "/dashboard", label: "홈", icon: House },
+      { type: "link", to: "/issues", label: "이슈", icon: CircleDot },
+      { type: "action", label: "작성", icon: SquarePen, onClick: () => openNewIssue() },
+      { type: "link", to: "/agents/all", label: "에이전트", icon: Users },
       {
         type: "link",
         to: "/inbox",
-        label: "Inbox",
+        label: "받은 편지함",
         icon: Inbox,
         badge: inboxBadge.inbox,
       },
@@ -62,7 +62,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
         "fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 transition-transform duration-200 ease-out md:hidden pb-[env(safe-area-inset-bottom)]",
         visible ? "translate-y-0" : "translate-y-full",
       )}
-      aria-label="Mobile navigation"
+      aria-label="모바일 내비게이션"
     >
       <div className="grid h-16 grid-cols-5 px-1">
         {items.map((item) => {

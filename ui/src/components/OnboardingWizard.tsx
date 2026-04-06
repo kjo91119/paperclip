@@ -299,7 +299,7 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
-    setTaskTitle("Hire your first engineer and create a hiring plan");
+    setTaskTitle("첫 실행 계획을 세우고 필요한 첫 역할을 제안하세요");
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
@@ -355,7 +355,7 @@ export function OnboardingWizard() {
   ): Promise<AdapterEnvironmentTestResult | null> {
     if (!createdCompanyId) {
       setAdapterEnvError(
-        "Create or select a company before testing adapter environment."
+        "회사를 만들거나 선택한 뒤 어댑터 환경을 테스트할 수 있습니다."
       );
       return null;
     }
@@ -373,7 +373,7 @@ export function OnboardingWizard() {
       return result;
     } catch (err) {
       setAdapterEnvError(
-        err instanceof Error ? err.message : "Adapter environment test failed"
+        err instanceof Error ? err.message : "어댑터 환경 테스트에 실패했습니다."
       );
       return null;
     } finally {
@@ -411,7 +411,7 @@ export function OnboardingWizard() {
 
       setStep(2);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create company");
+      setError(err instanceof Error ? err.message : "회사를 생성하지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -426,7 +426,7 @@ export function OnboardingWizard() {
         const selectedModelId = model.trim();
         if (!selectedModelId) {
           setError(
-            "OpenCode requires an explicit model in provider/model format."
+            "OpenCode는 provider/model 형식의 모델을 명시해야 합니다."
           );
           return;
         }
@@ -434,13 +434,13 @@ export function OnboardingWizard() {
           setError(
             adapterModelsError instanceof Error
               ? adapterModelsError.message
-              : "Failed to load OpenCode models."
+              : "OpenCode 모델을 불러오지 못했습니다."
           );
           return;
         }
         if (adapterModelsLoading || adapterModelsFetching) {
           setError(
-            "OpenCode models are still loading. Please wait and try again."
+            "OpenCode 모델을 불러오는 중입니다. 잠시 후 다시 시도해 주세요."
           );
           return;
         }
@@ -448,8 +448,8 @@ export function OnboardingWizard() {
         if (!discoveredModels.some((entry) => entry.id === selectedModelId)) {
           setError(
             discoveredModels.length === 0
-              ? "No OpenCode models discovered. Run `opencode models` and authenticate providers."
-              : `Configured OpenCode model is unavailable: ${selectedModelId}`
+              ? "감지된 OpenCode 모델이 없습니다. `opencode models`를 실행하고 제공자 인증을 마쳐 주세요."
+              : `설정한 OpenCode 모델을 사용할 수 없습니다: ${selectedModelId}`
           );
           return;
         }
@@ -481,7 +481,7 @@ export function OnboardingWizard() {
       });
       setStep(3);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create agent");
+      setError(err instanceof Error ? err.message : "에이전트를 생성하지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -522,14 +522,14 @@ export function OnboardingWizard() {
       const result = await runAdapterEnvironmentTest(configWithUnset);
       if (result?.status === "fail") {
         setError(
-          "Retried with ANTHROPIC_API_KEY unset in adapter config, but the environment test is still failing."
+          "어댑터 설정에서 ANTHROPIC_API_KEY를 비운 뒤 다시 테스트했지만 환경 점검이 여전히 실패했습니다."
         );
       }
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to unset ANTHROPIC_API_KEY and retry."
+          : "ANTHROPIC_API_KEY를 해제하고 다시 시도하지 못했습니다."
       );
     } finally {
       setUnsetAnthropicLoading(false);
@@ -595,7 +595,7 @@ export function OnboardingWizard() {
           : `/issues/${issueRef}`
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create task");
+      setError(err instanceof Error ? err.message : "작업을 생성하지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -700,7 +700,7 @@ export function OnboardingWizard() {
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="Acme Corp"
+                      placeholder="예: 에이전트랩"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
                       autoFocus
@@ -828,39 +828,39 @@ export function OnboardingWizard() {
                             value: "gemini_local" as const,
                             label: "Gemini CLI",
                             icon: Gem,
-                            desc: "Local Gemini agent"
+                            desc: "로컬 Gemini 에이전트"
                           },
                           {
                             value: "opencode_local" as const,
                             label: "OpenCode",
                             icon: OpenCodeLogoIcon,
-                            desc: "Local multi-provider agent"
+                            desc: "로컬 멀티 프로바이더 에이전트"
                           },
                           {
                             value: "pi_local" as const,
                             label: "Pi",
                             icon: Terminal,
-                            desc: "Local Pi agent"
+                            desc: "로컬 Pi 에이전트"
                           },
                           {
                             value: "cursor" as const,
                             label: "Cursor",
                             icon: MousePointer2,
-                            desc: "Local Cursor agent"
+                            desc: "로컬 Cursor 에이전트"
                           },
                           {
                             value: "hermes_local" as const,
                             label: "Hermes Agent",
                             icon: HermesIcon,
-                            desc: "Local multi-provider agent"
+                            desc: "로컬 멀티 프로바이더 에이전트"
                           },
                           {
                             value: "openclaw_gateway" as const,
                             label: "OpenClaw Gateway",
                             icon: Bot,
-                            desc: "Invoke OpenClaw via gateway protocol",
+                            desc: "게이트웨이 프로토콜로 OpenClaw 호출",
                             comingSoon: true,
-                            disabledLabel: "Configure OpenClaw within the App"
+                            disabledLabel: "앱 안에서 OpenClaw 설정"
                           }
                         ].map((opt) => (
                           <button
@@ -900,7 +900,7 @@ export function OnboardingWizard() {
                             <span className="text-muted-foreground text-[10px]">
                               {opt.comingSoon
                                 ? (opt as { disabledLabel?: string })
-                                    .disabledLabel ?? "Coming soon"
+                                    .disabledLabel ?? "곧 제공"
                                 : opt.desc}
                             </span>
                           </button>
@@ -920,7 +920,7 @@ export function OnboardingWizard() {
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs text-muted-foreground mb-1 block">
-                          Model
+                          모델
                         </label>
                         <Popover
                           open={modelOpen}
@@ -1059,10 +1059,9 @@ export function OnboardingWizard() {
                       {shouldSuggestUnsetAnthropicApiKey && (
                         <div className="rounded-md border border-amber-300/60 bg-amber-50/40 px-2.5 py-2 space-y-2">
                           <p className="text-[11px] text-amber-900/90 leading-relaxed">
-                            Claude failed while{" "}
                             <span className="font-mono">ANTHROPIC_API_KEY</span>{" "}
-                            is set. You can clear it in this CEO adapter config
-                            and retry the probe.
+                            가 설정된 상태에서 Claude 테스트가 실패했습니다. 이 CEO
+                            어댑터 설정에서 값을 비우고 다시 점검할 수 있습니다.
                           </p>
                           <Button
                             size="sm"
@@ -1085,18 +1084,18 @@ export function OnboardingWizard() {
                           <p className="font-medium">수동 점검</p>
                           <p className="text-muted-foreground font-mono break-all">
                             {adapterType === "cursor"
-                              ? `${effectiveAdapterCommand} -p --mode ask --output-format json \"Respond with hello.\"`
+                              ? `${effectiveAdapterCommand} -p --mode ask --output-format json \"안녕하세요라고 답해 주세요.\"`
                               : adapterType === "codex_local"
                               ? `${effectiveAdapterCommand} exec --json -`
                               : adapterType === "gemini_local"
-                                ? `${effectiveAdapterCommand} --output-format json "Respond with hello."`
+                                ? `${effectiveAdapterCommand} --output-format json "안녕하세요라고 답해 주세요."`
                               : adapterType === "opencode_local"
-                                ? `${effectiveAdapterCommand} run --format json "Respond with hello."`
+                                ? `${effectiveAdapterCommand} run --format json "안녕하세요라고 답해 주세요."`
                               : `${effectiveAdapterCommand} --print - --output-format stream-json --verbose`}
                           </p>
                           <p className="text-muted-foreground">
                             프롬프트:{" "}
-                            <span className="font-mono">Respond with hello.</span>
+                            <span className="font-mono">안녕하세요라고 답해 주세요.</span>
                           </p>
                           {adapterType === "cursor" ||
                           adapterType === "codex_local" ||

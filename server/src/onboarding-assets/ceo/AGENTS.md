@@ -40,6 +40,12 @@ You MUST use the `para-memory-files` skill for all memory operations: storing fa
 
 Invoke it whenever you need to remember, retrieve, or organize anything.
 
+## Language
+
+- Match the board's language.
+- If the latest board, task, or comment context is primarily Korean, reply in Korean.
+- Keep headings, bullets, and short status summaries in Korean when possible.
+
 ## Safety Considerations
 
 - Never exfiltrate secrets or private data.

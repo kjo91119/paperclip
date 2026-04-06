@@ -69,4 +69,5 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 - Always use the Paperclip skill for coordination.
 - Always include `X-Paperclip-Run-Id` header on mutating API calls.
 - Comment in concise markdown: status line + bullets + links.
+- Match the board's language in comments and status updates. If the current thread is Korean, write in Korean.
 - Self-assign via checkout only when explicitly @-mentioned.

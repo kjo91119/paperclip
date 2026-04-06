@@ -119,7 +119,7 @@ export function Agents() {
   }, [agents]);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Agents" }]);
+    setBreadcrumbs([{ label: "에이전트" }]);
   }, [setBreadcrumbs]);
 
   if (!selectedCompanyId) {

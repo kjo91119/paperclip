@@ -109,7 +109,7 @@ function CopyMarkdownButton({ text }: { text: string }) {
     <button
       type="button"
       className="text-muted-foreground hover:text-foreground transition-colors"
-      title="Copy as markdown"
+      title="마크다운으로 복사"
       onClick={() => {
         navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
@@ -225,11 +225,11 @@ function CommentCard({
               to={`/agents/${comment.runAgentId}/runs/${comment.runId}`}
               className="inline-flex items-center rounded-md border border-border bg-accent/30 px-2 py-1 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
             >
-              run {comment.runId.slice(0, 8)}
+              실행 {comment.runId.slice(0, 8)}
             </Link>
           ) : (
             <span className="inline-flex items-center rounded-md border border-border bg-accent/30 px-2 py-1 text-[10px] font-mono text-muted-foreground">
-              run {comment.runId.slice(0, 8)}
+              실행 {comment.runId.slice(0, 8)}
             </span>
           )}
         </div>
@@ -256,7 +256,7 @@ const TimelineList = memo(function TimelineList({
   highlightCommentId?: string | null;
 }) {
   if (timeline.length === 0) {
-    return <p className="text-sm text-muted-foreground">No comments or runs yet.</p>;
+    return <p className="text-sm text-muted-foreground">아직 댓글이나 실행 기록이 없습니다.</p>;
   }
 
   return (
@@ -278,7 +278,7 @@ const TimelineList = memo(function TimelineList({
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Run</span>
+                <span className="text-muted-foreground">실행</span>
                 <Link
                   to={`/agents/${run.agentId}/runs/${run.runId}`}
                   className="inline-flex items-center rounded-md border border-border bg-accent/40 px-2 py-1 font-mono text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors"
@@ -467,7 +467,7 @@ export function CommentThread({
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold">댓글 &amp; 실행 ({timeline.length + queuedComments.length})</h3>
+      <h3 className="text-sm font-semibold">댓글 및 실행 ({timeline.length + queuedComments.length})</h3>
 
       {timeline.length > 0 ? (
         <TimelineList

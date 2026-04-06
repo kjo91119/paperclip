@@ -17,7 +17,7 @@ describe("issueDetailBreadcrumb", () => {
 
   it("falls back to the source query param when route state is unavailable", () => {
     expect(readIssueDetailBreadcrumb(null, "?from=inbox")).toEqual({
-      label: "Inbox",
+      label: "받은 편지함",
       href: "/inbox",
     });
   });

@@ -36,8 +36,8 @@ function readIssueDetailSourceFromSearch(search?: string): IssueDetailSource | n
 }
 
 function breadcrumbForSource(source: IssueDetailSource): IssueDetailBreadcrumb {
-  if (source === "inbox") return { label: "Inbox", href: "/inbox" };
-  return { label: "Issues", href: "/issues" };
+  if (source === "inbox") return { label: "받은 편지함", href: "/inbox" };
+  return { label: "이슈", href: "/issues" };
 }
 
 export function createIssueDetailLocationState(

@@ -193,6 +193,15 @@ export function joinPromptSections(
     .join(separator);
 }
 
+export function buildResponseLanguageNote(): string {
+  return [
+    "Response language note:",
+    "Match the board's language when you reply in Paperclip.",
+    "If the latest board, task, or comment context is primarily Korean, respond in Korean.",
+    "Keep headings, bullets, and short status summaries in the same language as the surrounding thread unless a quoted artifact must stay verbatim.",
+  ].join("\n");
+}
+
 export function redactEnvForLogs(env: Record<string, string>): Record<string, string> {
   const redacted: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {

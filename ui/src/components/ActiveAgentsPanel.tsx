@@ -52,11 +52,11 @@ export function ActiveAgentsPanel({ companyId }: ActiveAgentsPanelProps) {
   return (
     <div>
       <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-        Agents
+        에이전트
       </h3>
       {runs.length === 0 ? (
         <div className="rounded-xl border border-border p-4">
-          <p className="text-sm text-muted-foreground">No recent agent runs.</p>
+          <p className="text-sm text-muted-foreground">최근 에이전트 실행이 없습니다.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
@@ -111,7 +111,13 @@ function AgentRunCard({
               <Identity name={run.agentName} size="sm" className="[&>span:last-child]:!text-[11px]" />
             </div>
             <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span>{isActive ? "Live now" : run.finishedAt ? `Finished ${relativeTime(run.finishedAt)}` : `Started ${relativeTime(run.createdAt)}`}</span>
+              <span>
+                {isActive
+                  ? "실행 중"
+                  : run.finishedAt
+                    ? `${relativeTime(run.finishedAt)} 완료`
+                    : `${relativeTime(run.createdAt)} 시작`}
+              </span>
             </div>
           </div>
 
@@ -148,7 +154,13 @@ function AgentRunCard({
           streaming={isActive}
           collapseStdout
           thinkingClassName="!text-[10px] !leading-4"
-          emptyMessage={hasOutput ? "Waiting for transcript parsing..." : isActive ? "Waiting for output..." : "No transcript captured."}
+          emptyMessage={
+            hasOutput
+              ? "트랜스크립트를 정리하는 중입니다..."
+              : isActive
+                ? "출력을 기다리는 중입니다..."
+                : "기록된 트랜스크립트가 없습니다."
+          }
         />
       </div>
     </div>

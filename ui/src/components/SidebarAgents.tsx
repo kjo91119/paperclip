@@ -81,7 +81,7 @@ export function SidebarAgents() {
               )}
             />
             <span className="text-[10px] font-medium uppercase tracking-widest font-mono text-muted-foreground/60">
-              Agents
+              에이전트
             </span>
           </CollapsibleTrigger>
           <button
@@ -90,7 +90,7 @@ export function SidebarAgents() {
               openNewAgent();
             }}
             className="flex items-center justify-center h-4 w-4 rounded text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-colors"
-            aria-label="New agent"
+            aria-label="새 에이전트"
           >
             <Plus className="h-3 w-3" />
           </button>
@@ -120,7 +120,7 @@ export function SidebarAgents() {
                 {(agent.pauseReason === "budget" || runCount > 0) && (
                   <span className="ml-auto flex items-center gap-1.5 shrink-0">
                     {agent.pauseReason === "budget" ? (
-                      <BudgetSidebarMarker title="Agent paused by budget" />
+                      <BudgetSidebarMarker title="예산으로 일시중지됨" />
                     ) : null}
                     {runCount > 0 ? (
                       <span className="relative flex h-2 w-2">
@@ -130,7 +130,7 @@ export function SidebarAgents() {
                     ) : null}
                     {runCount > 0 ? (
                       <span className="text-[11px] font-medium text-blue-600 dark:text-blue-400">
-                        {runCount} live
+                        {runCount} 실행 중
                       </span>
                     ) : null}
                   </span>
