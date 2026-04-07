@@ -194,7 +194,7 @@
 - 결과:
   - `154` test files passed
   - `1` test file failed
-  - `821` tests passed
+  - `822` tests passed
   - `2` skipped
 - 실패:
   - `cli/src/__tests__/company-import-export-e2e.test.ts`
