@@ -935,10 +935,14 @@ export function IssueDetail() {
 
       <div className="space-y-3">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          <StatusIcon
-            status={issue.status}
-            onChange={isOrchestratedMeeting ? undefined : (status) => updateIssue.mutate({ status })}
-          />
+          {isOrchestratedMeeting ? (
+            <StatusBadge status={issue.status} />
+          ) : (
+            <StatusIcon
+              status={issue.status}
+              onChange={(status) => updateIssue.mutate({ status })}
+            />
+          )}
           <PriorityIcon
             priority={issue.priority}
             onChange={(priority) => updateIssue.mutate({ priority })}
