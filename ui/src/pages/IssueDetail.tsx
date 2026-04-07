@@ -17,6 +17,11 @@ import { assigneeValueFromSelection, suggestedCommentAssigneeValue } from "../li
 import { queryKeys } from "../lib/queryKeys";
 import { createIssueDetailPath, readIssueDetailBreadcrumb } from "../lib/issueDetailBreadcrumb";
 import {
+  isIssueDetailReadOnly,
+  shouldShowIssueDetailEditableStatus,
+  shouldShowIssueDetailHideAction,
+} from "../lib/issue-detail-controls";
+import {
   applyOptimisticIssueCommentUpdate,
   createOptimisticIssueComment,
   isQueuedIssueComment,
@@ -836,7 +841,7 @@ export function IssueDetail() {
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
 
-  const isOrchestratedMeeting = issue.meetingMode === "orchestrated";
+  const isOrchestratedMeeting = isIssueDetailReadOnly(issue);
 
   // Ancestors are returned oldest-first from the server (root at end, immediate parent at start)
   const ancestors = issue.ancestors ?? [];
@@ -935,7 +940,7 @@ export function IssueDetail() {
 
       <div className="space-y-3">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          {isOrchestratedMeeting ? (
+          {!shouldShowIssueDetailEditableStatus(issue) ? (
             <StatusBadge status={issue.status} />
           ) : (
             <StatusIcon
@@ -1046,7 +1051,7 @@ export function IssueDetail() {
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
 
-            {!isOrchestratedMeeting ? (
+            {shouldShowIssueDetailHideAction(issue) ? (
               <Popover open={moreOpen} onOpenChange={setMoreOpen}>
                 <PopoverTrigger asChild>
                   <Button variant="ghost" size="icon-xs" className="shrink-0">

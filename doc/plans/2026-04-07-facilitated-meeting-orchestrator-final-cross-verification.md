@@ -24,11 +24,8 @@
 - 오케스트레이션 구조, 라운드 상태머신, summary/final summary, transcript projection, MeetingRoomDTO 기반 UI, 비용/가드레일 polish까지 구현됨
 - root orchestrated meeting issue는 서버 route guard뿐 아니라 UI header에서도 generic lifecycle mutation dead-end가 남지 않도록 read-only 표현으로 정리됨
 - `git diff --check`, `pnpm -r typecheck`, `pnpm build`는 통과했음
-- full-suite `pnpm test:run`은 이번 환경에서
-  - `cli/src/__tests__/company-import-export-e2e.test.ts`
-  - `server/src/__tests__/company-skills-routes.test.ts`
-  timeout 때문에 green으로 닫히지 않음
-- 다만 `company-skills-routes`는 단독 재실행에서 통과했고, `company-import-export-e2e`는 단독 재실행도 timeout으로 실패했음
+- latest full-suite rerun에서는 `cli/src/__tests__/company-import-export-e2e.test.ts` 1건만 실패했고, `server/src/__tests__/company-skills-routes.test.ts`는 통과했음
+- `company-import-export-e2e`는 full suite에서는 여전히 `/api/health` 대기 timeout으로 실패하지만, standalone 재실행은 통과함
 
 ## 2. 전체 구현 범위 요약
 
@@ -131,11 +128,13 @@
 - `ui/src/pages/AgentDetail.tsx`
 - `ui/src/pages/MyIssues.tsx`
 - `ui/src/lib/meeting-room.ts`
+- `ui/src/lib/issue-detail-controls.ts`
 - `ui/src/lib/inbox.ts`
 - `ui/src/lib/queryKeys.ts`
 - `ui/src/pages/Inbox.test.tsx`
 - `ui/src/pages/OfficeView.model.test.ts`
 - `ui/src/lib/meeting-room.test.ts`
+- `ui/src/lib/issue-detail-controls.test.ts`
 
 ### 4.4 docs
 
@@ -158,10 +157,12 @@
 ### 5.2 현재 검증 환경에서 남아 있는 failure
 
 - `cli/src/__tests__/company-import-export-e2e.test.ts`
-  - full suite와 단독 재실행 모두 `/api/health` 또는 `beforeAll` timeout으로 실패
-- `server/src/__tests__/company-skills-routes.test.ts`
-  - full suite 병렬 실행에서는 `5000ms` timeout 1회 발생
-  - 단독 재실행에서는 통과
+  - full suite에서는 `/api/health` 대기 timeout으로 실패
+  - standalone 재실행은 통과
+
+참고:
+
+- `server/src/__tests__/company-skills-routes.test.ts`는 latest full-suite와 standalone 재실행 모두 통과했고, 현재 known blocker로 보지 않는다.
 
 따라서 현재 최종 판정은 workspace-wide green이 아니라 `Conditional Pass`다.
 
@@ -173,6 +174,7 @@
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm -r typecheck`
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm build`
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm --filter @paperclipai/server exec vitest run src/__tests__/company-skills-routes.test.ts`
+- `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm --filter @paperclipai/ui exec vitest run src/lib/issue-detail-controls.test.ts`
 
 ### 6.2 관련 targeted test 상태
 
@@ -180,6 +182,8 @@
   - `14` tests passed
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm --filter @paperclipai/ui exec vitest run src/lib/meeting-room.test.ts src/pages/Inbox.test.tsx src/pages/OfficeView.model.test.ts`
   - `33` tests passed
+- `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm --filter @paperclipai/ui exec vitest run src/lib/issue-detail-controls.test.ts`
+  - `2` tests passed
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm --filter @paperclipai/server exec vitest run src/__tests__/company-skills-routes.test.ts`
   - `3` tests passed
 
@@ -187,24 +191,19 @@
 
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm test:run`
 - 결과:
-  - `152` test files passed
-  - `2` test files failed
-  - `1` test failed
-  - `818` tests passed
+  - `153` test files passed
+  - `1` test file failed
+  - `819` tests passed
   - `2` skipped
 - 실패:
   - `cli/src/__tests__/company-import-export-e2e.test.ts`
-  - `server/src/__tests__/company-skills-routes.test.ts`
 
 ### 6.4 standalone known-failure 상태
 
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm exec vitest run src/__tests__/company-import-export-e2e.test.ts` (in `cli/`)
 - 결과:
-  - `1` test file failed
-  - `1` test skipped
-- 실패:
-  - `cli/src/__tests__/company-import-export-e2e.test.ts`
-  - `/api/health` 또는 `beforeAll` timeout
+  - `1` test file passed
+  - `1` test passed
 
 ## 7. reviewer에게 같이 전달할 메모
 
@@ -233,10 +232,8 @@ Phase A~F를 모두 거친 상태에서 최종 종합 교차검증을 요청드�
 중요:
 - 이번 검토는 개별 phase correctness보다, generic issue plane / orchestrated meeting plane / transcript / wakeup / unread / activity log가 최종적으로 서로 모순 없이 닫혔는지를 보는 최종 검토입니다.
 - /meeting/cancel endpoint는 아직 의도적으로 501 skeleton입니다.
-- 현재 full pnpm test:run은 아래 두 failure 때문에 Conditional Pass 상태입니다:
-  - cli/src/__tests__/company-import-export-e2e.test.ts timeout
-  - server/src/__tests__/company-skills-routes.test.ts timeout
-- company-skills-routes는 단독 재실행에서는 통과했고, company-import-export-e2e는 단독 재실행도 timeout이 납니다.
+- 현재 full pnpm test:run은 cli/src/__tests__/company-import-export-e2e.test.ts timeout 1건 때문에 Conditional Pass 상태입니다.
+- company-import-export-e2e는 standalone 재실행은 통과했고, server/src/__tests__/company-skills-routes.test.ts는 latest full-suite와 standalone 모두 통과했습니다.
 
 반드시 봐 주세요:
 - root meeting issue route/UI read-only guard
