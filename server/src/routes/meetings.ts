@@ -128,11 +128,36 @@ export function meetingRoutes(db: Db) {
     res.json(dto);
   });
 
+  router.post("/issues/:issueId/meeting/continue", async (req, res) => {
+    const loaded = await loadControlledIssue(req);
+    if (!loaded) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const dto = await meetings.continueMeetingByIssueId(loaded.normalizedIssueId, actor);
+    res.json(dto);
+  });
+
+  router.post("/issues/:issueId/meeting/participants/:agentId/skip", async (req, res) => {
+    const loaded = await loadControlledIssue(req);
+    if (!loaded) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const agentId = paramString(req.params.agentId);
+    if (!agentId) {
+      res.status(400).json({ error: "agentId is required" });
+      return;
+    }
+    const dto = await meetings.skipParticipantByIssueId(loaded.normalizedIssueId, agentId, actor);
+    res.json(dto);
+  });
+
   const phaseBSkeletonHandlers = [
-    "/issues/:issueId/meeting/continue",
     "/issues/:issueId/meeting/cancel",
     "/issues/:issueId/meeting/summary",
-    "/issues/:issueId/meeting/participants/:agentId/skip",
   ] as const;
 
   for (const path of phaseBSkeletonHandlers) {

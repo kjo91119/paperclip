@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agentWakeupRequests,
@@ -12,10 +12,8 @@ import {
 } from "@paperclipai/db";
 import type {
   CreateMeeting,
-  IssueMeetingRoundKind,
   IssueMeetingRoundParticipantStatus,
   IssueMeetingStatus,
-  IssueSystemCommentKind,
   MeetingRoomDTO,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
@@ -78,6 +76,37 @@ type MeetingServiceDeps = {
 type MeetingRow = typeof issueMeetings.$inferSelect;
 type MeetingRoundRow = typeof issueMeetingRounds.$inferSelect;
 
+type TranscriptRootSystemComment = {
+  id: string;
+  body: string;
+  createdAt: Date;
+  authorKind: "system";
+  systemCommentKind: string | null;
+};
+
+type TranscriptRoundParticipantRow = {
+  roundId: string;
+  roundNumber: number;
+  roundKind: MeetingRoomDTO["rounds"][number]["kind"];
+  status: IssueMeetingRoundParticipantStatus;
+  participantId: string;
+  agentId: string;
+  childIssueId: string;
+  speakingOrder: number;
+  dispatchPromptCommentId: string | null;
+  responseCommentId: string | null;
+  lateResponseCommentId: string | null;
+  respondedAt: Date | null;
+};
+
+type TranscriptAgentComment = {
+  id: string;
+  issueId: string;
+  authorAgentId: string | null;
+  body: string;
+  createdAt: Date;
+};
+
 function deriveNeedsAttention(status: string) {
   return status === "awaiting_operator" || status === "failed";
 }
@@ -133,10 +162,11 @@ function childIssueTitle(agentName: string, agenda: string) {
 }
 
 function roundOpenedBody(input: { roundNumber: number; agenda: string }) {
+  const stageLabel = input.roundNumber === 1 ? "1차 의견 수집" : `${input.roundNumber}차 토론`;
   return [
     `라운드 ${input.roundNumber} 시작`,
     "",
-    "이번 라운드는 전체회의 1차 의견 수집 단계입니다.",
+    `이번 라운드는 전체회의 ${stageLabel} 단계입니다.`,
     "",
     "안건:",
     input.agenda.trim(),
@@ -184,6 +214,59 @@ function openingPromptBody(input: {
   return lines.join("\n");
 }
 
+function discussionPromptBody(input: {
+  roundNumber: number;
+  agenda: string;
+  participantNames: string[];
+  facilitatorName: string | null;
+  referencePath: string | null;
+  priorRoundSummary: string | null;
+  ownPreviousResponse: string | null;
+}) {
+  const lines = [
+    `전체회의 라운드 ${input.roundNumber} 토론 요청`,
+    "",
+    "이번 라운드에서는 다른 참가자의 핵심 주장에 반응해 주세요.",
+    "동의/반대/보완을 분명히 하고, 실행 가능한 절충안을 제안해 주세요.",
+    "",
+    "안건:",
+    input.agenda.trim(),
+  ];
+
+  if (input.referencePath) {
+    lines.push("", "참고 경로:", input.referencePath);
+  }
+
+  if (input.facilitatorName) {
+    lines.push("", `진행자: ${input.facilitatorName}`);
+  }
+
+  if (input.participantNames.length > 0) {
+    lines.push("", "참가자:");
+    for (const name of input.participantNames) {
+      lines.push(`- ${name}`);
+    }
+  }
+
+  if (input.priorRoundSummary) {
+    lines.push("", "이전 라운드 요약:", input.priorRoundSummary.trim());
+  }
+
+  if (input.ownPreviousResponse) {
+    lines.push("", "당신의 이전 입장:", input.ownPreviousResponse.trim());
+  }
+
+  lines.push(
+    "",
+    "답변 형식:",
+    "1. 동의하는 주장",
+    "2. 반대하거나 보완할 주장",
+    "3. 지금 바로 가능한 절충안",
+  );
+
+  return lines.join("\n");
+}
+
 function roundSummaryBody(input: {
   roundNumber: number;
   agenda: string;
@@ -211,7 +294,8 @@ function operatorAttentionBody(input: {
   roundNumber: number;
   responded: number;
   total: number;
-  reason: "round_complete" | "timeout_zero" | "partial_timeout";
+  blockedOrFailed?: number;
+  reason: "round_complete" | "timeout_zero" | "partial_timeout" | "dispatch_blocked";
 }) {
   if (input.reason === "round_complete") {
     return [
@@ -230,6 +314,18 @@ function operatorAttentionBody(input: {
       `응답 수: 0/${input.total}`,
       "",
       "재촉(remind) 또는 회의 취소 중 하나를 선택해 주세요.",
+    ].join("\n");
+  }
+
+  if (input.reason === "dispatch_blocked") {
+    return [
+      `라운드 ${input.roundNumber} dispatch 중 운영자 확인이 필요합니다.`,
+      "",
+      `응답 수: ${input.responded}/${input.total}`,
+      `실행 불가 참가자 수: ${input.blockedOrFailed ?? 0}`,
+      "",
+      "예산 차단, 에이전트 일시중지, 실행 실패 등으로 일부 참가자가 시작되지 못했습니다.",
+      "재촉(remind), 제외 후 계속, 또는 회의 중단 중 하나를 선택해 주세요.",
     ].join("\n");
   }
 
@@ -319,6 +415,10 @@ function uniqueParticipantIds(ids: string[]) {
   return [...new Set(ids)];
 }
 
+function uniqueIds(ids: Array<string | null | undefined>) {
+  return [...new Set(ids.filter((value): value is string => Boolean(value)))];
+}
+
 export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
   const issueSvc = issueService(db);
   const heartbeat = heartbeatService(db);
@@ -396,6 +496,15 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
     if (!rootIssue) return null;
     const currentRound = rounds.find((round) => round.roundNumber === meeting.currentRoundNumber) ?? null;
+    const transcript = await buildMeetingTranscript({
+      meeting,
+      rootIssueId: rootIssue.id,
+      participants,
+      rounds: rounds.map((round) => ({
+        ...round,
+        kind: round.kind as MeetingRoomDTO["rounds"][number]["kind"],
+      })),
+    });
 
     return {
       meeting: {
@@ -448,8 +557,330 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         deadlineAt: round.deadlineAt,
         completedAt: round.completedAt,
       })),
-      transcript: [],
+      transcript,
     };
+  }
+
+  async function buildMeetingTranscript(input: {
+    meeting: MeetingRow;
+    rootIssueId: string;
+    participants: Array<typeof issueMeetingParticipants.$inferSelect>;
+    rounds: Array<MeetingRoundRow & { kind: MeetingRoomDTO["rounds"][number]["kind"] }>;
+  }): Promise<MeetingRoomDTO["transcript"]> {
+    if (input.rounds.length === 0) return [];
+
+    const [roundParticipantRows, rootSystemComments, childAgentComments] = await Promise.all([
+      db
+        .select({
+          roundId: issueMeetingRoundParticipants.roundId,
+          roundNumber: issueMeetingRounds.roundNumber,
+          roundKind: issueMeetingRounds.kind,
+          status: issueMeetingRoundParticipants.status,
+          participantId: issueMeetingRoundParticipants.participantId,
+          agentId: issueMeetingRoundParticipants.agentId,
+          childIssueId: issueMeetingRoundParticipants.childIssueId,
+          speakingOrder: issueMeetingParticipants.speakingOrder,
+          dispatchPromptCommentId: issueMeetingRoundParticipants.dispatchPromptCommentId,
+          responseCommentId: issueMeetingRoundParticipants.responseCommentId,
+          lateResponseCommentId: issueMeetingRoundParticipants.lateResponseCommentId,
+          respondedAt: issueMeetingRoundParticipants.respondedAt,
+        })
+        .from(issueMeetingRoundParticipants)
+        .innerJoin(issueMeetingRounds, eq(issueMeetingRoundParticipants.roundId, issueMeetingRounds.id))
+        .innerJoin(issueMeetingParticipants, eq(issueMeetingRoundParticipants.participantId, issueMeetingParticipants.id))
+        .where(eq(issueMeetingRoundParticipants.meetingId, input.meeting.id))
+        .orderBy(
+          asc(issueMeetingRounds.roundNumber),
+          asc(issueMeetingParticipants.speakingOrder),
+          asc(issueMeetingRoundParticipants.createdAt),
+        ) as Promise<TranscriptRoundParticipantRow[]>,
+      db
+        .select({
+          id: issueComments.id,
+          body: issueComments.body,
+          createdAt: issueComments.createdAt,
+          authorKind: issueComments.authorKind,
+          systemCommentKind: issueComments.systemCommentKind,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.issueId, input.rootIssueId),
+            eq(issueComments.authorKind, "system"),
+          ),
+        )
+        .orderBy(asc(issueComments.createdAt)) as Promise<TranscriptRootSystemComment[]>,
+      input.participants.length === 0
+        ? Promise.resolve([] as TranscriptAgentComment[])
+        : db
+          .select({
+            id: issueComments.id,
+            issueId: issueComments.issueId,
+            authorAgentId: issueComments.authorAgentId,
+            body: issueComments.body,
+            createdAt: issueComments.createdAt,
+          })
+          .from(issueComments)
+          .where(
+            and(
+              inArray(issueComments.issueId, input.participants.map((participant) => participant.childIssueId)),
+              eq(issueComments.authorKind, "agent"),
+            ),
+          )
+          .orderBy(asc(issueComments.createdAt)),
+    ]);
+
+    const referencedCommentIds = uniqueIds([
+      ...input.rounds.flatMap((round) => [round.roundOpenRootCommentId, round.roundSummaryCommentId]),
+      ...roundParticipantRows.flatMap((row) => [
+        row.dispatchPromptCommentId,
+        row.responseCommentId,
+        row.lateResponseCommentId,
+      ]),
+    ]);
+
+    const referencedComments = referencedCommentIds.length === 0
+      ? []
+      : await db
+        .select({
+          id: issueComments.id,
+          issueId: issueComments.issueId,
+          body: issueComments.body,
+          createdAt: issueComments.createdAt,
+          authorKind: issueComments.authorKind,
+          systemCommentKind: issueComments.systemCommentKind,
+        })
+        .from(issueComments)
+        .where(inArray(issueComments.id, referencedCommentIds));
+
+    const commentMetaById = new Map(referencedComments.map((comment) => [comment.id, comment]));
+    const rootCommentById = new Map(rootSystemComments.map((comment) => [comment.id, comment]));
+    const agentCommentsByKey = new Map<string, TranscriptAgentComment[]>();
+    const agentCommentById = new Map(childAgentComments.map((comment) => [comment.id, comment]));
+
+    for (const comment of childAgentComments) {
+      const key = `${comment.issueId}:${comment.authorAgentId ?? ""}`;
+      const bucket = agentCommentsByKey.get(key) ?? [];
+      bucket.push(comment);
+      agentCommentsByKey.set(key, bucket);
+    }
+
+    const transcript: MeetingRoomDTO["transcript"] = [];
+    const meetingTerminalAt = input.meeting.completedAt;
+    const meetingIsTerminal = TERMINAL_MEETING_STATUSES.has(input.meeting.status as IssueMeetingStatus);
+
+    for (const [roundIndex, round] of input.rounds.entries()) {
+      const nextRound = input.rounds[roundIndex + 1] ?? null;
+      const roundParticipants = roundParticipantRows.filter((row) => row.roundId === round.id);
+      const roundOpenComment = round.roundOpenRootCommentId
+        ? rootCommentById.get(round.roundOpenRootCommentId) ?? commentMetaById.get(round.roundOpenRootCommentId)
+        : null;
+      if (roundOpenComment) {
+        transcript.push({
+          entryKind: "round_opened",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: null,
+          sourceIssueId: input.rootIssueId,
+          sourceCommentId: roundOpenComment.id,
+          authorKind: "system",
+          systemCommentKind: "round_opened",
+          body: roundOpenComment.body,
+          createdAt: roundOpenComment.createdAt,
+          respondedAt: null,
+          speakingOrder: null,
+        });
+      }
+
+      const roundSummaryComment = round.roundSummaryCommentId
+        ? rootCommentById.get(round.roundSummaryCommentId) ?? commentMetaById.get(round.roundSummaryCommentId)
+        : null;
+
+      const roundStartMs = (
+        roundOpenComment?.createdAt ??
+        round.startedAt ??
+        round.createdAt
+      ).getTime();
+      const nextRoundStartMs = nextRound
+        ? (nextRound.startedAt ?? nextRound.createdAt).getTime()
+        : Number.POSITIVE_INFINITY;
+      const operatorSignals = rootSystemComments.filter((comment) =>
+        comment.systemCommentKind === "operator_attention" &&
+        (
+          comment.body.includes(`라운드 ${round.roundNumber} `) ||
+          (
+            comment.createdAt.getTime() >= roundStartMs &&
+            comment.createdAt.getTime() < nextRoundStartMs
+          )
+        )
+      );
+      const roundCloseMs = Math.min(
+        roundSummaryComment?.createdAt.getTime() ?? Number.POSITIVE_INFINITY,
+        operatorSignals[0]?.createdAt.getTime() ?? Number.POSITIVE_INFINITY,
+        nextRoundStartMs,
+        meetingTerminalAt?.getTime() ?? Number.POSITIVE_INFINITY,
+      );
+
+      const respondedParticipants = [...roundParticipants]
+        .filter((row) => Boolean(row.responseCommentId))
+        .sort((a, b) => {
+          const aTime = a.respondedAt?.getTime() ?? 0;
+          const bTime = b.respondedAt?.getTime() ?? 0;
+          if (aTime !== bTime) return aTime - bTime;
+          return a.speakingOrder - b.speakingOrder;
+        });
+
+      const nextRoundPromptTimes = new Map<string, number>();
+      for (const nextRow of roundIndex < input.rounds.length - 1
+        ? roundParticipantRows.filter((row) => row.roundId === nextRound?.id)
+        : []) {
+        const promptComment = nextRow.dispatchPromptCommentId
+          ? commentMetaById.get(nextRow.dispatchPromptCommentId)
+          : null;
+        if (promptComment) {
+          nextRoundPromptTimes.set(`${nextRow.childIssueId}:${nextRow.agentId}`, promptComment.createdAt.getTime());
+        }
+      }
+
+      for (const participant of respondedParticipants) {
+        const responseComment = participant.responseCommentId
+          ? agentCommentById.get(participant.responseCommentId)
+          : null;
+        if (!responseComment) continue;
+
+        transcript.push({
+          entryKind: "participant_response",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: participant.agentId,
+          sourceIssueId: participant.childIssueId,
+          sourceCommentId: responseComment.id,
+          authorKind: "agent",
+          systemCommentKind: null,
+          body: responseComment.body,
+          createdAt: responseComment.createdAt,
+          respondedAt: participant.respondedAt,
+          speakingOrder: participant.speakingOrder,
+        });
+
+        const upperBoundMs = Math.min(
+          nextRoundPromptTimes.get(`${participant.childIssueId}:${participant.agentId}`) ?? Number.POSITIVE_INFINITY,
+          roundCloseMs,
+        );
+        const extraComments = (agentCommentsByKey.get(`${participant.childIssueId}:${participant.agentId}`) ?? [])
+          .filter((comment) =>
+            comment.id !== responseComment.id &&
+            comment.createdAt.getTime() >= responseComment.createdAt.getTime() &&
+            comment.createdAt.getTime() <= upperBoundMs
+          )
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+        for (const extraComment of extraComments) {
+          transcript.push({
+            entryKind: "participant_response_extra",
+            roundNumber: round.roundNumber,
+            roundKind: round.kind,
+            participantAgentId: participant.agentId,
+            sourceIssueId: participant.childIssueId,
+            sourceCommentId: extraComment.id,
+            authorKind: "agent",
+            systemCommentKind: null,
+            body: extraComment.body,
+            createdAt: extraComment.createdAt,
+            respondedAt: extraComment.createdAt,
+            speakingOrder: participant.speakingOrder,
+          });
+        }
+      }
+      if (roundSummaryComment) {
+        transcript.push({
+          entryKind: "round_summary",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: null,
+          sourceIssueId: input.rootIssueId,
+          sourceCommentId: roundSummaryComment.id,
+          authorKind: "system",
+          systemCommentKind: "round_summary",
+          body: roundSummaryComment.body,
+          createdAt: roundSummaryComment.createdAt,
+          respondedAt: null,
+          speakingOrder: null,
+        });
+      }
+      for (const operatorSignal of operatorSignals) {
+        transcript.push({
+          entryKind: "operator_signal",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: null,
+          sourceIssueId: input.rootIssueId,
+          sourceCommentId: operatorSignal.id,
+          authorKind: "system",
+          systemCommentKind: "operator_attention",
+          body: operatorSignal.body,
+          createdAt: operatorSignal.createdAt,
+          respondedAt: null,
+          speakingOrder: null,
+        });
+      }
+
+      const lateResponses = roundParticipants
+        .filter((row) => Boolean(row.lateResponseCommentId))
+        .map((row) => {
+          const lateComment = row.lateResponseCommentId
+            ? agentCommentById.get(row.lateResponseCommentId)
+            : null;
+          return lateComment
+            ? {
+              row,
+              lateComment,
+            }
+            : null;
+        })
+        .filter((value): value is { row: TranscriptRoundParticipantRow; lateComment: TranscriptAgentComment } => Boolean(value))
+        .sort((a, b) => a.lateComment.createdAt.getTime() - b.lateComment.createdAt.getTime());
+
+      for (const late of lateResponses) {
+        if (meetingIsTerminal && meetingTerminalAt && late.lateComment.createdAt.getTime() > meetingTerminalAt.getTime()) {
+          continue;
+        }
+        transcript.push({
+          entryKind: "late_response",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: late.row.agentId,
+          sourceIssueId: late.row.childIssueId,
+          sourceCommentId: late.lateComment.id,
+          authorKind: "agent",
+          systemCommentKind: null,
+          body: late.lateComment.body,
+          createdAt: late.lateComment.createdAt,
+          respondedAt: late.row.respondedAt,
+          speakingOrder: late.row.speakingOrder,
+        });
+      }
+    }
+
+    const meetingCompletedComment = rootSystemComments.find((comment) => comment.systemCommentKind === "meeting_completed");
+    if (meetingCompletedComment) {
+      transcript.push({
+        entryKind: "meeting_completed",
+        roundNumber: input.meeting.currentRoundNumber,
+        roundKind: input.rounds.find((round) => round.roundNumber === input.meeting.currentRoundNumber)?.kind ?? null,
+        participantAgentId: null,
+        sourceIssueId: input.rootIssueId,
+        sourceCommentId: meetingCompletedComment.id,
+        authorKind: "system",
+        systemCommentKind: "meeting_completed",
+        body: meetingCompletedComment.body,
+        createdAt: meetingCompletedComment.createdAt,
+        respondedAt: null,
+        speakingOrder: null,
+      });
+    }
+
+    return transcript;
   }
 
   async function logMeetingActivity(
@@ -700,6 +1131,46 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         }> };
       }
 
+      const previousRound = round.roundNumber > 1
+        ? await tx
+          .select()
+          .from(issueMeetingRounds)
+          .where(
+            and(
+              eq(issueMeetingRounds.meetingId, meetingId),
+              eq(issueMeetingRounds.roundNumber, round.roundNumber - 1),
+            ),
+          )
+          .then((rows) => rows[0] ?? null)
+        : null;
+
+      const previousRoundSummaryBody = previousRound?.roundSummaryCommentId
+        ? await tx
+          .select({ body: issueComments.body })
+          .from(issueComments)
+          .where(eq(issueComments.id, previousRound.roundSummaryCommentId))
+          .then((rows) => rows[0]?.body ?? null)
+        : null;
+
+      const previousResponseRows = previousRound
+        ? await tx
+          .select({
+            participantId: issueMeetingRoundParticipants.participantId,
+            body: issueComments.body,
+          })
+          .from(issueMeetingRoundParticipants)
+          .innerJoin(issueComments, eq(issueMeetingRoundParticipants.responseCommentId, issueComments.id))
+          .where(
+            and(
+              eq(issueMeetingRoundParticipants.roundId, previousRound.id),
+              isNotNull(issueMeetingRoundParticipants.responseCommentId),
+            ),
+          )
+        : [];
+      const previousResponseBodyByParticipantId = new Map(
+        previousResponseRows.map((row) => [row.participantId, row.body]),
+      );
+
       const roster = await tx
         .select({
           roundParticipantId: issueMeetingRoundParticipants.id,
@@ -735,13 +1206,25 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       }> = [];
 
       for (const row of roster) {
-        const promptComment = await issueSvcTx.addCommentInTx(tx, row.childIssueId, {
-          body: openingPromptBody({
+        const promptBody = round.kind === "opening"
+          ? openingPromptBody({
             agenda: meeting.agenda,
             participantNames,
             facilitatorName,
             referencePath: meeting.referencePath,
-          }),
+          })
+          : discussionPromptBody({
+            roundNumber: round.roundNumber,
+            agenda: meeting.agenda,
+            participantNames,
+            facilitatorName,
+            referencePath: meeting.referencePath,
+            priorRoundSummary: previousRoundSummaryBody,
+            ownPreviousResponse: previousResponseBodyByParticipantId.get(row.participantId) ?? null,
+          });
+
+        const promptComment = await issueSvcTx.addCommentInTx(tx, row.childIssueId, {
+          body: promptBody,
           systemKey: MEETING_SYSTEM_AUTHOR_KEY,
           systemCommentKind: "control_notice",
         });
@@ -778,6 +1261,12 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     });
 
     const dispatchWakeup = deps.dispatchWakeup ?? defaultDispatchWakeup;
+    const dispatchResults: Array<{
+      participantId: string;
+      agentId: string;
+      childIssueId: string;
+      participantStatus: IssueMeetingRoundParticipantStatus;
+    }> = [];
     for (const row of prepared.rows) {
       const idempotencyKey = `meeting:${meetingId}:round:${roundId}:participant:${row.participantId}:attempt:${Date.now()}:${row.commentId}`;
       const outcome = await dispatchWakeup({
@@ -817,16 +1306,95 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         dispatchWakeupStatus: outcome.wakeupStatus,
         participantStatus: outcome.participantStatus,
       });
+
+      dispatchResults.push({
+        participantId: row.participantId,
+        agentId: row.agentId,
+        childIssueId: row.childIssueId,
+        participantStatus: outcome.participantStatus,
+      });
     }
 
-    await db
-      .update(issueMeetingRounds)
-      .set({
-        status: "collecting",
-        updatedAt: now(),
-        transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
-      })
-      .where(eq(issueMeetingRounds.id, roundId));
+    const blockedOrFailedCount = dispatchResults.filter((result) =>
+      result.participantStatus === "blocked" || result.participantStatus === "failed"
+    ).length;
+
+    await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+
+      if (blockedOrFailedCount > 0) {
+        const participantCounts = await tx
+          .select({ status: issueMeetingRoundParticipants.status })
+          .from(issueMeetingRoundParticipants)
+          .where(eq(issueMeetingRoundParticipants.roundId, roundId));
+        const respondedCount = participantCounts.filter((row) => row.status === "responded").length;
+        const totalCount = participantCounts.length;
+
+        const attentionComment = await issueSvcTx.addCommentInTx(tx, prepared.meeting.rootIssueId, {
+          body: operatorAttentionBody({
+            roundNumber: prepared.round.roundNumber,
+            responded: respondedCount,
+            total: totalCount,
+            blockedOrFailed: blockedOrFailedCount,
+            reason: "dispatch_blocked",
+          }),
+          systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+          systemCommentKind: "operator_attention",
+        });
+
+        await tx
+          .update(issueMeetingRounds)
+          .set({
+            status: "awaiting_operator",
+            updatedAt: now(),
+            transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+          })
+          .where(and(eq(issueMeetingRounds.id, roundId), eq(issueMeetingRounds.status, "dispatching")));
+
+        await tx
+          .update(issueMeetings)
+          .set({
+            status: "awaiting_operator",
+            lastOperatorSignalCommentId: attentionComment.id,
+            updatedAt: now(),
+            transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+          })
+          .where(eq(issueMeetings.id, meetingId));
+
+        await syncRootIssueStatusMirror(tx, {
+          rootIssueId: prepared.meeting.rootIssueId,
+          meetingStatus: "awaiting_operator",
+        });
+        return;
+      }
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "collecting",
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(and(eq(issueMeetingRounds.id, roundId), eq(issueMeetingRounds.status, "dispatching")));
+    });
+
+    if (blockedOrFailedCount > 0) {
+      await logMeetingActivity(
+        {
+          actorType: "system",
+          actorId: MEETING_SYSTEM_ACTOR_ID,
+        },
+        prepared.meeting.companyId,
+        meetingId,
+        "meeting.operator_attention_set",
+        {
+          roundId,
+          roundNumber: prepared.round.roundNumber,
+          blockedOrFailedCount,
+          reason: "dispatch_blocked",
+        },
+      );
+    }
   }
 
   async function startMeetingById(meetingId: string, actor: MeetingActor) {
@@ -889,6 +1457,11 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         roundId: started.round.id,
         roundNumber: started.round.roundNumber,
       });
+      await logMeetingActivity(actor, started.meeting.companyId, meetingId, "meeting.round_opened", {
+        roundId: started.round.id,
+        roundNumber: started.round.roundNumber,
+        roundKind: started.round.kind,
+      });
       await dispatchPendingParticipants(meetingId, started.round.id, actor);
     }
 
@@ -927,8 +1500,27 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         .then((rows) => new Map(rows.map((row) => [row.id, row.body])))
       : new Map<string, string>();
 
-    await db.transaction(async (tx) => {
+    const completed = await db.transaction(async (tx) => {
       const issueSvcTx = issueService(db);
+      const [claimedRound] = await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "summarizing",
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(and(eq(issueMeetingRounds.id, round.id), isNull(issueMeetingRounds.roundSummaryCommentId)))
+        .returning({ id: issueMeetingRounds.id });
+      if (!claimedRound) {
+        return null;
+      }
+
+      const totalParticipants = await tx
+        .select({ count: sql<number>`count(*)` })
+        .from(issueMeetingRoundParticipants)
+        .where(eq(issueMeetingRoundParticipants.roundId, round.id))
+        .then((rows) => Number(rows[0]?.count ?? 0));
+
       const summaryComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
         body: roundSummaryBody({
           roundNumber: round.roundNumber,
@@ -946,7 +1538,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         body: operatorAttentionBody({
           roundNumber: round.roundNumber,
           responded: respondedRows.length,
-          total: respondedRows.length,
+          total: totalParticipants,
           reason: "round_complete",
         }),
         systemKey: MEETING_SYSTEM_AUTHOR_KEY,
@@ -992,13 +1584,17 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         rootIssueId: meeting.rootIssueId,
         meetingStatus: "awaiting_operator",
       });
+      return { respondedCount: respondedRows.length };
     });
+
+    if (!completed) return false;
 
     await logMeetingActivity(actor, meeting.companyId, meeting.id, "meeting.round_completed", {
       roundId: round.id,
       roundNumber: round.roundNumber,
-      respondedCount: respondedRows.length,
+      respondedCount: completed.respondedCount,
     });
+    return true;
   }
 
   async function maybeAdvanceRoundAfterResponse(meetingId: string, actor: MeetingActor) {
@@ -1012,7 +1608,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     }
 
     const round = await getCurrentRound(meeting.id, meeting.currentRoundNumber);
-    if (!round || !["collecting", "dispatching"].includes(round.status)) return;
+    if (!round || !["collecting", "dispatching", "awaiting_operator", "timed_out"].includes(round.status)) return;
 
     const participantRows = await db
       .select()
@@ -1357,6 +1953,229 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     return getById(freshMeeting.id);
   }
 
+  async function skipParticipantByIssueId(issueId: string, agentId: string, actor: MeetingActor) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+
+    await refreshMeetingState(meeting.id);
+    const freshMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, meeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!freshMeeting) throw notFound("Meeting not found");
+    if (!["awaiting_operator", "running"].includes(freshMeeting.status)) {
+      throw unprocessable("Participant skip is only allowed while the meeting is active");
+    }
+
+    const round = await getCurrentRound(freshMeeting.id, freshMeeting.currentRoundNumber);
+    if (!round || !["collecting", "awaiting_operator", "timed_out"].includes(round.status)) {
+      throw unprocessable("Participant skip is only allowed during collecting, awaiting_operator, or timed_out");
+    }
+
+    const participant = await db
+      .select({
+        roundParticipantId: issueMeetingRoundParticipants.id,
+        participantId: issueMeetingRoundParticipants.participantId,
+        status: issueMeetingRoundParticipants.status,
+      })
+      .from(issueMeetingRoundParticipants)
+      .where(
+        and(
+          eq(issueMeetingRoundParticipants.roundId, round.id),
+          eq(issueMeetingRoundParticipants.agentId, agentId),
+        ),
+      )
+      .then((rows) => rows[0] ?? null);
+
+    if (!participant) throw notFound("Meeting participant not found");
+    if (participant.status === "responded") {
+      throw unprocessable("Cannot skip a participant who already responded");
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(issueMeetingRoundParticipants)
+        .set({
+          status: "skipped",
+          skipReason: "operator.skip",
+          skippedAt: now(),
+          updatedAt: now(),
+        })
+        .where(eq(issueMeetingRoundParticipants.id, participant.roundParticipantId));
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "awaiting_operator",
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetingRounds.id, round.id));
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: "awaiting_operator",
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, freshMeeting.id));
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: freshMeeting.rootIssueId,
+        meetingStatus: "awaiting_operator",
+      });
+    });
+
+    await logMeetingActivity(actor, freshMeeting.companyId, freshMeeting.id, "meeting.participant_skipped", {
+      roundId: round.id,
+      participantId: participant.participantId,
+      agentId,
+    });
+
+    return getById(freshMeeting.id);
+  }
+
+  async function continueMeetingByIssueId(issueId: string, actor: MeetingActor) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+
+    await refreshMeetingState(meeting.id);
+    const freshMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, meeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!freshMeeting) throw notFound("Meeting not found");
+    if (freshMeeting.status !== "awaiting_operator") {
+      throw unprocessable("Meeting can only continue from awaiting_operator");
+    }
+
+    const currentRound = await getCurrentRound(freshMeeting.id, freshMeeting.currentRoundNumber);
+    if (!currentRound) throw notFound("Current meeting round not found");
+    if (!["completed", "awaiting_operator", "timed_out"].includes(currentRound.status)) {
+      throw unprocessable("Current round is not ready to continue");
+    }
+
+    const roundParticipantRows = await db
+      .select({
+        status: issueMeetingRoundParticipants.status,
+      })
+      .from(issueMeetingRoundParticipants)
+      .where(eq(issueMeetingRoundParticipants.roundId, currentRound.id));
+    const respondedCount = roundParticipantRows.filter((row) => row.status === "responded").length;
+    if (respondedCount === 0) {
+      throw unprocessable("Cannot continue without at least one participant response");
+    }
+
+    if (!currentRound.roundSummaryCommentId) {
+      await completeRoundWithSummary(freshMeeting, currentRound, actor);
+    }
+
+    const discussionRoundsUsed = await db
+      .select({ kind: issueMeetingRounds.kind })
+      .from(issueMeetingRounds)
+      .where(eq(issueMeetingRounds.meetingId, freshMeeting.id))
+      .then((rows) => rows.filter((row) => row.kind === "discussion" || row.kind === "followup").length);
+
+    let nextRoundKind: "discussion" | "followup";
+    if (currentRound.kind === "opening") {
+      nextRoundKind = "discussion";
+    } else if (currentRound.kind === "discussion" || currentRound.kind === "followup") {
+      if (discussionRoundsUsed >= freshMeeting.maxDiscussionRounds) {
+        throw unprocessable("Discussion round budget is exhausted; final summary belongs to the next phase");
+      }
+      nextRoundKind = "followup";
+    } else {
+      throw unprocessable("Continue is not supported for the current round kind");
+    }
+
+    const prepared = await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+      const activeParticipants = await tx
+        .select()
+        .from(issueMeetingParticipants)
+        .where(and(eq(issueMeetingParticipants.meetingId, freshMeeting.id), eq(issueMeetingParticipants.status, "active")))
+        .orderBy(asc(issueMeetingParticipants.speakingOrder), asc(issueMeetingParticipants.createdAt));
+
+      if (activeParticipants.length < 2) {
+        throw unprocessable("Continuing to the next discussion round requires at least two active participants");
+      }
+
+      const openedAt = now();
+      const [nextRound] = await tx
+        .insert(issueMeetingRounds)
+        .values({
+          companyId: freshMeeting.companyId,
+          meetingId: freshMeeting.id,
+          roundNumber: (freshMeeting.currentRoundNumber ?? 0) + 1,
+          kind: nextRoundKind,
+          status: "dispatching",
+          summaryRequestedByUserId: null,
+          startedAt: openedAt,
+          deadlineAt: new Date(openedAt.getTime() + (freshMeeting.responseTimeoutSec * 1000)),
+          createdAt: openedAt,
+          updatedAt: openedAt,
+        })
+        .returning();
+
+      const roundOpenComment = await issueSvcTx.addCommentInTx(tx, freshMeeting.rootIssueId, {
+        body: roundOpenedBody({ roundNumber: nextRound.roundNumber, agenda: freshMeeting.agenda }),
+        systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+        systemCommentKind: "round_opened",
+      });
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          roundOpenRootCommentId: roundOpenComment.id,
+          updatedAt: openedAt,
+        })
+        .where(eq(issueMeetingRounds.id, nextRound.id));
+
+      await tx.insert(issueMeetingRoundParticipants).values(
+        activeParticipants.map((participant) => ({
+          companyId: freshMeeting.companyId,
+          meetingId: freshMeeting.id,
+          roundId: nextRound.id,
+          participantId: participant.id,
+          agentId: participant.agentId,
+          childIssueId: participant.childIssueId,
+          status: "pending_dispatch",
+          createdAt: openedAt,
+          updatedAt: openedAt,
+        })),
+      );
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: "running",
+          currentRoundNumber: nextRound.roundNumber,
+          updatedAt: openedAt,
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, freshMeeting.id));
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: freshMeeting.rootIssueId,
+        meetingStatus: "running",
+      });
+
+      return nextRound;
+    });
+
+    await logMeetingActivity(actor, freshMeeting.companyId, freshMeeting.id, "meeting.round_opened", {
+      roundId: prepared.id,
+      roundNumber: prepared.roundNumber,
+      roundKind: prepared.kind,
+    });
+
+    await dispatchPendingParticipants(freshMeeting.id, prepared.id, actor);
+    return getById(freshMeeting.id);
+  }
+
   async function onIssueCommentAdded(input: {
     issueId: string;
     comment: {
@@ -1372,13 +2191,14 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     if (!meeting) return;
 
     const round = await getCurrentRound(meeting.id, meeting.currentRoundNumber);
-    if (!round || !["collecting", "dispatching"].includes(round.status)) return;
+    if (!round || !["collecting", "dispatching", "awaiting_operator", "timed_out"].includes(round.status)) return;
 
     const participant = await db
       .select({
         roundParticipantId: issueMeetingRoundParticipants.id,
         status: issueMeetingRoundParticipants.status,
         childIssueId: issueMeetingRoundParticipants.childIssueId,
+        lateResponseCommentId: issueMeetingRoundParticipants.lateResponseCommentId,
       })
       .from(issueMeetingRoundParticipants)
       .where(
@@ -1392,17 +2212,31 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
     if (!participant || participant.status === "responded") return;
 
+    const isLateResponse = ["timed_out", "blocked", "skipped", "failed"].includes(participant.status);
+
     await db.transaction(async (tx) => {
-      await tx
-        .update(issueMeetingRoundParticipants)
-        .set({
-          status: "responded",
-          responseCommentId: input.comment.id,
-          responseRunId: input.actor.runId ?? null,
-          respondedAt: now(),
-          updatedAt: now(),
-        })
-        .where(eq(issueMeetingRoundParticipants.id, participant.roundParticipantId));
+      if (isLateResponse) {
+        await tx
+          .update(issueMeetingRoundParticipants)
+          .set({
+            status: "late",
+            lateResponseCommentId: participant.lateResponseCommentId ?? input.comment.id,
+            respondedAt: now(),
+            updatedAt: now(),
+          })
+          .where(eq(issueMeetingRoundParticipants.id, participant.roundParticipantId));
+      } else {
+        await tx
+          .update(issueMeetingRoundParticipants)
+          .set({
+            status: "responded",
+            responseCommentId: input.comment.id,
+            responseRunId: input.actor.runId ?? null,
+            respondedAt: now(),
+            updatedAt: now(),
+          })
+          .where(eq(issueMeetingRoundParticipants.id, participant.roundParticipantId));
+      }
 
       await tx
         .update(issues)
@@ -1418,12 +2252,15 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       commentId: input.comment.id,
       agentId: input.comment.authorAgentId,
       childIssueId: input.issueId,
+      late: isLateResponse,
     });
 
-    await maybeAdvanceRoundAfterResponse(meeting.id, {
-      actorType: "system",
-      actorId: MEETING_SYSTEM_ACTOR_ID,
-    });
+    if (!isLateResponse) {
+      await maybeAdvanceRoundAfterResponse(meeting.id, {
+        actorType: "system",
+        actorId: MEETING_SYSTEM_ACTOR_ID,
+      });
+    }
   }
 
   async function getById(meetingId: string) {
@@ -1440,6 +2277,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
   return {
     createMeeting,
+    continueMeetingByIssueId,
     getById,
     getByIssueId,
     onIssueCommentAdded,
@@ -1447,6 +2285,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     refreshMeetingState,
     remindParticipantByIssueId,
     resumeMeetingByIssueId,
+    skipParticipantByIssueId,
     startMeetingById,
     startMeetingByIssueId,
     syncRootIssueStatusMirror,
