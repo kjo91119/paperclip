@@ -199,7 +199,7 @@
 - 실패:
   - `cli/src/__tests__/company-import-export-e2e.test.ts`
 
-### 6.4 standalone known-failure 상태
+### 6.4 standalone verification 상태
 
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm exec vitest run src/__tests__/company-import-export-e2e.test.ts` (in `cli/`)
 - 결과:
