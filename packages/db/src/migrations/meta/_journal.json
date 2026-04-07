@@ -337,6 +337,13 @@
       "when": 1775543833695,
       "tag": "0047_nosy_nebula",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1775549882838,
+      "tag": "0048_clear_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

@@ -26,6 +26,7 @@ import {
   heartbeatService,
   issueApprovalService,
   issueService,
+  meetingService,
   documentService,
   logActivity,
   projectService,
@@ -57,6 +58,7 @@ const ROOT_MEETING_GUARDED_PATCH_FIELDS = [
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
   const svc = issueService(db);
+  const meetingsSvc = meetingService(db);
   const access = accessService(db);
   const heartbeat = heartbeatService(db);
   const agentsSvc = agentService(db);
@@ -1200,6 +1202,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
         },
       });
 
+      await meetingsSvc.onIssueCommentAdded({
+        issueId: issue.id,
+        comment,
+        actor,
+      });
+
     }
 
     const assigneeChanged = assigneeWillChange;
@@ -1606,6 +1614,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
         ...(reopened ? { reopened: true, reopenedFrom: reopenFromStatus, source: "comment" } : {}),
         ...(interruptedRunId ? { interruptedRunId } : {}),
       },
+    });
+
+    await meetingsSvc.onIssueCommentAdded({
+      issueId: currentIssue.id,
+      comment,
+      actor,
     });
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.

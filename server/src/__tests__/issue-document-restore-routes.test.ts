@@ -26,6 +26,9 @@ const mockAgentService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
+const mockMeetingService = vi.hoisted(() => ({
+  onIssueCommentAdded: vi.fn(async () => undefined),
+}));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,
@@ -39,6 +42,7 @@ vi.mock("../services/index.js", () => ({
   }),
   issueApprovalService: () => ({}),
   issueService: () => mockIssueService,
+  meetingService: () => mockMeetingService,
   logActivity: mockLogActivity,
   projectService: () => ({}),
   routineService: () => ({
