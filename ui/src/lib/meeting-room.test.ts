@@ -9,9 +9,13 @@ import {
   canRequestMeetingSummary,
   canResumeMeeting,
   canSkipMeetingParticipant,
+  describeMeetingStatus,
+  estimateMeetingExecution,
+  formatMeetingDurationLabel,
   formatMeetingParticipantStatusLabel,
   formatMeetingRoundKindLabel,
   formatMeetingStatusLabel,
+  meetingGuardrailNotes,
 } from "./meeting-room";
 
 function createMeetingRoom(overrides: Partial<MeetingRoomDTO> = {}): MeetingRoomDTO {
@@ -129,5 +133,51 @@ describe("meeting room helpers", () => {
     });
     expect(canRemindMeetingParticipant(timedOutRound, participant)).toBe(true);
     expect(canSkipMeetingParticipant(timedOutRound, participant)).toBe(false);
+  });
+
+  it("computes a rough execution estimate and timeout labels", () => {
+    const room = createMeetingRoom({
+      participants: [
+        { id: "p1", agentId: "agent-1", childIssueId: "child-1", speakingOrder: 0, status: "active", isFacilitator: true, isSummarizer: true },
+        { id: "p2", agentId: "agent-2", childIssueId: "child-2", speakingOrder: 1, status: "active", isFacilitator: false, isSummarizer: false },
+        { id: "p3", agentId: "agent-3", childIssueId: "child-3", speakingOrder: 2, status: "active", isFacilitator: false, isSummarizer: false },
+      ],
+      meeting: {
+        ...createMeetingRoom().meeting,
+        maxDiscussionRounds: 2,
+        responseTimeoutSec: 1800,
+      },
+    });
+
+    const estimate = estimateMeetingExecution(room);
+    expect(estimate.estimatedTotalRounds).toBe(4);
+    expect(estimate.maxResponses).toBe(10);
+    expect(estimate.estimatedPromptTokensMin).toBeGreaterThan(0);
+    expect(formatMeetingDurationLabel(room.meeting.responseTimeoutSec)).toBe("30분");
+  });
+
+  it("produces guardrail notes and status copy for edge states", () => {
+    const room = createMeetingRoom({
+      participants: [
+        { id: "p1", agentId: "agent-1", childIssueId: "child-1", speakingOrder: 0, status: "active", isFacilitator: true, isSummarizer: true },
+        { id: "p2", agentId: "agent-2", childIssueId: "child-2", speakingOrder: 1, status: "active", isFacilitator: false, isSummarizer: false },
+        { id: "p3", agentId: "agent-3", childIssueId: "child-3", speakingOrder: 2, status: "active", isFacilitator: false, isSummarizer: false },
+        { id: "p4", agentId: "agent-4", childIssueId: "child-4", speakingOrder: 3, status: "active", isFacilitator: false, isSummarizer: false },
+      ],
+      meeting: {
+        ...createMeetingRoom().meeting,
+        status: "paused",
+        maxDiscussionRounds: 3,
+        responseTimeoutSec: 3600,
+        autoContinue: false,
+      },
+    });
+
+    expect(meetingGuardrailNotes(room)).toHaveLength(4);
+    expect(describeMeetingStatus(room)).toEqual({
+      tone: "warning",
+      title: "회의가 일시중지되었습니다",
+      body: "재개하기 전까지 새 라운드 전이와 자동 dispatch가 멈춰 있습니다.",
+    });
   });
 });

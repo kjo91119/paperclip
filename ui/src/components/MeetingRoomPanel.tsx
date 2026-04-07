@@ -22,9 +22,13 @@ import {
   canRequestMeetingSummary,
   canResumeMeeting,
   canSkipMeetingParticipant,
+  describeMeetingStatus,
+  estimateMeetingExecution,
+  formatMeetingDurationLabel,
   formatMeetingParticipantStatusLabel,
   formatMeetingRoundKindLabel,
   formatMeetingStatusLabel,
+  meetingGuardrailNotes,
 } from "../lib/meeting-room";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -71,6 +75,20 @@ function controlActionLabel(action: MeetingRoomAction["kind"]) {
   return "참가자 건너뛰기";
 }
 
+function statusNoticeToneClass(tone: ReturnType<typeof describeMeetingStatus>["tone"]) {
+  if (tone === "warning") return "border-amber-500/30 bg-amber-500/10 text-amber-100";
+  if (tone === "success") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-100";
+  if (tone === "error") return "border-rose-500/30 bg-rose-500/10 text-rose-100";
+  return "border-border bg-card text-foreground";
+}
+
+function statusNoticeIcon(tone: ReturnType<typeof describeMeetingStatus>["tone"]) {
+  if (tone === "warning") return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />;
+  if (tone === "success") return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />;
+  if (tone === "error") return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />;
+  return <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />;
+}
+
 export function MeetingRoomPanel({
   issue,
   room,
@@ -85,6 +103,10 @@ export function MeetingRoomPanel({
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
+  const statusNotice = describeMeetingStatus(room);
+  const executionEstimate = estimateMeetingExecution(room);
+  const timeoutLabel = formatMeetingDurationLabel(room.meeting.responseTimeoutSec);
+  const guardrailNotes = meetingGuardrailNotes(room);
   const transcript = useMemo(
     () => [...room.transcript].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [room.transcript],
@@ -140,6 +162,22 @@ export function MeetingRoomPanel({
   });
 
   const compactClass = compact ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1.7fr)_18rem]";
+  const transcriptEmptyMessage =
+    room.meeting.status === "draft"
+      ? "아직 transcript가 없습니다. 회의를 시작하면 오프닝 라운드와 응답이 여기부터 쌓입니다."
+      : room.meeting.status === "paused"
+        ? "회의가 일시중지되어 새 transcript가 잠시 멈춘 상태입니다."
+        : room.meeting.status === "failed"
+          ? "회의가 실패 상태라 transcript가 더 진행되지 않았습니다. 최근 운영자 신호를 먼저 확인하세요."
+          : "아직 표시할 회의 transcript가 없습니다.";
+  const roundEmptyMessage =
+    room.meeting.status === "draft"
+      ? "회의를 시작하면 현재 라운드 참가자 상태가 채워집니다."
+      : room.meeting.status === "completed" || room.meeting.status === "partial_completed"
+        ? "현재 진행 중인 라운드가 없어 참가자 상태 패널이 비어 있습니다."
+        : room.meeting.status === "failed"
+          ? "회의가 실패 상태라 현재 라운드 상태를 더 진행할 수 없습니다."
+          : "현재 라운드 참가자 상태가 없습니다.";
 
   return (
     <div className="space-y-4">
@@ -164,6 +202,7 @@ export function MeetingRoomPanel({
                 <span>
                   현재 라운드 {room.meeting.currentRoundNumber ?? "-"} · {formatMeetingRoundKindLabel(room.meeting.currentRoundKind)}
                 </span>
+                <span>응답 마감 {timeoutLabel}</span>
                 {currentRound?.deadlineAt ? <span>마감 {relativeTime(currentRound.deadlineAt)}</span> : null}
                 {room.meeting.completedAt ? <span>종료 {formatDateTime(room.meeting.completedAt)}</span> : null}
               </div>
@@ -225,6 +264,13 @@ export function MeetingRoomPanel({
             ) : null}
           </div>
         </div>
+        <div className={cn("mt-4 flex gap-3 rounded-2xl border px-4 py-3", statusNoticeToneClass(statusNotice.tone))}>
+          {statusNoticeIcon(statusNotice.tone)}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{statusNotice.title}</div>
+            <p className="mt-1 text-sm/6 opacity-90">{statusNotice.body}</p>
+          </div>
+        </div>
       </div>
 
       <div className={cn("grid gap-4", compactClass)}>
@@ -238,7 +284,7 @@ export function MeetingRoomPanel({
           <div className="space-y-4 p-4">
             {transcript.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                아직 표시할 회의 transcript가 없습니다.
+                {transcriptEmptyMessage}
               </div>
             ) : transcript.map((entry) => {
               const authorName = transcriptAuthorName(entry, agentById);
@@ -274,13 +320,62 @@ export function MeetingRoomPanel({
         </div>
 
         <div className="space-y-4">
+          <div className="rounded-2xl border border-border bg-background/70 p-4">
+            <div className="text-sm font-semibold text-foreground">실행 규모와 가드레일</div>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">참가자</div>
+                <div className="mt-1 text-lg font-semibold text-foreground">{executionEstimate.participantCount}명</div>
+              </div>
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">토론 라운드 수</div>
+                <div className="mt-1 text-lg font-semibold text-foreground">{executionEstimate.maxDiscussionRounds}회</div>
+              </div>
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">예상 총 라운드</div>
+                <div className="mt-1 text-lg font-semibold text-foreground">{executionEstimate.estimatedTotalRounds}회</div>
+              </div>
+              <div className="rounded-xl border border-border px-3 py-2">
+                <div className="text-[11px] text-muted-foreground">최대 응답 수</div>
+                <div className="mt-1 text-lg font-semibold text-foreground">{executionEstimate.maxResponses.toLocaleString("ko-KR")}</div>
+              </div>
+            </div>
+            <div className="mt-3 rounded-xl border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+              <div>
+                거친 프롬프트 입력 규모는 약{" "}
+                <span className="font-medium text-foreground">
+                  {executionEstimate.estimatedPromptTokensMin.toLocaleString("ko-KR")} - {executionEstimate.estimatedPromptTokensMax.toLocaleString("ko-KR")} 토큰
+                </span>
+                {" "}수준입니다.
+              </div>
+              <div className="mt-1">참가자당 응답 마감은 {timeoutLabel}이고, 자동 진행은 {room.meeting.autoContinue ? "켜짐" : "꺼짐"} 상태입니다.</div>
+            </div>
+            <div className="mt-3 space-y-2">
+              {guardrailNotes.length === 0 ? (
+                <div className="rounded-xl border border-border px-3 py-2 text-sm text-muted-foreground">
+                  현재 설정은 기본 권장 범위 안에 있습니다.
+                </div>
+              ) : guardrailNotes.map((note) => (
+                <div
+                  key={note}
+                  className="flex gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-100"
+                >
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>{note}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="rounded-2xl border border-border bg-background/70">
             <div className="border-b border-border px-4 py-3">
               <div className="text-sm font-semibold text-foreground">현재 라운드 상태</div>
             </div>
             <div className="space-y-3 p-4">
               {room.currentRoundParticipants.length === 0 ? (
-                <p className="text-sm text-muted-foreground">현재 라운드 참가자 상태가 없습니다.</p>
+                <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                  {roundEmptyMessage}
+                </div>
               ) : room.currentRoundParticipants.map((participant) => {
                 const agentName = agentById.get(participant.agentId)?.name ?? participant.agentId;
                 return (
@@ -301,7 +396,11 @@ export function MeetingRoomPanel({
           <div className="rounded-2xl border border-border bg-background/70 p-4">
             <div className="text-sm font-semibold text-foreground">참가자</div>
             <div className="mt-3 space-y-2">
-              {room.participants.map((participant) => {
+              {room.participants.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                  아직 참가자가 없습니다. 최소 두 명 이상을 넣어야 정상적인 전체회의 토론이 가능합니다.
+                </div>
+              ) : room.participants.map((participant) => {
                 const agent = agentById.get(participant.agentId);
                 return (
                   <div key={participant.id} className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
