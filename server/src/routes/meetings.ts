@@ -177,7 +177,7 @@ export function meetingRoutes(db: Db) {
         res.status(404).json({ error: "Issue not found" });
         return;
       }
-      res.status(501).json({ error: "Meeting control is not implemented in Phase B yet" });
+      res.status(501).json({ error: "Meeting cancel is not yet implemented" });
     });
   }
 

@@ -6,8 +6,8 @@
 
 - 기준 변경셋:
   - final pre-fix base commit: `921d82c8`
-  - final implementation fix commit: `f19145bc`
-  - latest regression-hardening commit: `789dd2dc`
+  - final implementation fix commit: `9a16338b`
+  - read-only UI regression-hardening commits: `f19145bc`, `789dd2dc`
 - 브랜치: `local/2026-04-02-korean-ui-backup`
 - 구현 기준 문서:
   - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-plan.md`
@@ -26,7 +26,7 @@
 - root orchestrated meeting issue는 서버 route guard뿐 아니라 UI header에서도 generic lifecycle mutation dead-end가 남지 않도록 read-only 표현으로 정리됨
 - `git diff --check`, `pnpm -r typecheck`, `pnpm build`는 통과했음
 - latest full-suite rerun에서는 `cli/src/__tests__/company-import-export-e2e.test.ts` 1건만 실패했고, `server/src/__tests__/company-skills-routes.test.ts`는 통과했음
-- `company-import-export-e2e`는 full suite에서는 `beforeAll` hook timeout으로 실패했고, standalone 재실행도 `/api/health` 대기 timeout으로 실패함
+- `company-import-export-e2e`는 full suite에서는 `beforeAll` hook timeout으로 실패했고, standalone 재실행은 통과함
 
 ## 2. 전체 구현 범위 요약
 
@@ -159,7 +159,7 @@
 
 - `cli/src/__tests__/company-import-export-e2e.test.ts`
   - full suite에서는 `beforeAll` hook timeout으로 실패
-  - standalone 재실행은 `/api/health` 대기 timeout으로 실패
+  - standalone 재실행은 통과
 
 참고:
 
@@ -194,7 +194,7 @@
 - 결과:
   - `154` test files passed
   - `1` test file failed
-  - `822` tests passed
+  - `821` tests passed
   - `2` skipped
 - 실패:
   - `cli/src/__tests__/company-import-export-e2e.test.ts`
@@ -203,8 +203,8 @@
 
 - `TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm exec vitest run src/__tests__/company-import-export-e2e.test.ts` (in `cli/`)
 - 결과:
-  - `1` test file failed
-  - `1` test skipped
+  - `1` test file passed
+  - `1` test passed
 
 ## 7. reviewer에게 같이 전달할 메모
 
@@ -225,8 +225,8 @@ Phase A~F를 모두 거친 상태에서 최종 종합 교차검증을 요청드�
 
 기준:
 - base commit: 921d82c8
-- implementation fix commit: f19145bc
-- latest regression-hardening commit: 789dd2dc
+- implementation fix commit: 9a16338b
+- read-only UI regression-hardening commits: f19145bc, 789dd2dc
 - doc/plans/2026-04-07-facilitated-meeting-orchestrator-plan.md
 - doc/plans/2026-04-07-facilitated-meeting-orchestrator-cross-verification.md
 - doc/plans/2026-04-07-facilitated-meeting-orchestrator-final-cross-verification.md
@@ -235,7 +235,7 @@ Phase A~F를 모두 거친 상태에서 최종 종합 교차검증을 요청드�
 - 이번 검토는 개별 phase correctness보다, generic issue plane / orchestrated meeting plane / transcript / wakeup / unread / activity log가 최종적으로 서로 모순 없이 닫혔는지를 보는 최종 검토입니다.
 - /meeting/cancel endpoint는 아직 의도적으로 501 skeleton입니다.
 - 현재 full pnpm test:run은 cli/src/__tests__/company-import-export-e2e.test.ts beforeAll hook timeout 1건 때문에 Conditional Pass 상태입니다.
-- company-import-export-e2e는 standalone 재실행도 /api/health 대기 timeout으로 실패했고, server/src/__tests__/company-skills-routes.test.ts는 latest full-suite와 standalone 모두 통과했습니다.
+- company-import-export-e2e는 standalone 재실행은 통과했고, server/src/__tests__/company-skills-routes.test.ts는 latest full-suite와 standalone 모두 통과했습니다.
 
 반드시 봐 주세요:
 - root meeting issue route/UI read-only guard
