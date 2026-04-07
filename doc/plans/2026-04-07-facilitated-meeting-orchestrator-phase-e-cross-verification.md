@@ -105,7 +105,7 @@
 
 - 비용 표시 / 라운드 상한 안내 / polish copy 정리는 Phase F 범위다
 - 운영 가시성 badge/empty state 세부 polish는 Phase F 범위다
-- AgentDetail / Issues의 참여 회의 노출은 서버 filter 계약을 이미 따르지만, 이번 변경은 UI 대수술보다 deep-link / meeting room 진입 경로 정리에 초점을 둔다
+- `participantAgentId` 기반 참여 회의 노출은 서버 계약이 먼저 정리된 축이지만, Phase E reviewer는 `Issues.tsx` / `AgentDetail.tsx`가 이 필터 결과를 실제 UI 경로에서 놓치지 않는지까지 함께 확인해야 한다
 
 즉 이번 변경은 **IssueDetail / Office / Inbox를 orchestrated meeting room으로 실제 연결하는 Phase E UI 통합**이다.
 
@@ -122,6 +122,7 @@
 - Inbox의 unassigned root meeting issue deep-link가 정상 동작하는지
 - `MeetingRoomPanel` control action이 query invalidation과 함께 실제 화면을 갱신하는지
 - participant status panel이 current round DTO를 기준으로 렌더링되는지
+- `participantAgentId` 필터에서 orchestrated root meeting이 `Issues / AgentDetail`에 정상 반영되는지
 - `MyIssues`가 root meeting issue를 미할당 triage처럼 보여주지 않는지
 
 ## 5. reviewer가 반드시 볼 파일
@@ -131,6 +132,8 @@
 - `ui/src/components/office/OfficeConversationPanel.tsx`
 - `ui/src/pages/officeViewModel.ts`
 - `ui/src/pages/Inbox.tsx`
+- `ui/src/pages/Issues.tsx`
+- `ui/src/pages/AgentDetail.tsx`
 - `ui/src/pages/MyIssues.tsx`
 - `ui/src/components/MeetingRoomPanel.tsx`
 - `ui/src/lib/meeting-room.ts`
@@ -188,11 +191,13 @@
 
 - 이번 변경은 UI가 orchestrated meeting plane과 raw issue comment plane을 섞지 않도록 정리하는 것이 핵심이다.
 - reviewer는 특히 아래 다섯 가지를 집중해서 보면 된다.
+- reviewer는 특히 아래 여섯 가지를 집중해서 보면 된다.
   - IssueDetail이 raw comments가 아니라 meeting DTO를 쓰는지
   - Office meeting thread가 compact meeting room으로 렌더링되는지
   - Inbox deep-link가 unassigned root meeting에서도 열리는지
   - Office의 새 전체회의 생성이 legacy marker issue가 아니라 real meeting create endpoint를 타는지
   - meetingMode 기반 판별이 description fallback보다 우선하는지
+  - `Issues / AgentDetail`의 `participantAgentId` 경로에서 orchestrated root meeting이 빠지지 않는지
 - 전체 `pnpm test:run` 실패는 현재도 `company-import-export-e2e` 한 건의 beforeAll timeout이며, 이번 회의/UI 변경과 직접 맞닿은 targeted tests는 통과했다.
 
 ## 8. 전달용 프롬프트
@@ -220,6 +225,7 @@
 - orchestrated meeting thread에서 generic comment composer가 비활성화되는지
 - meetingMode 기반 UI 판별이 description fallback보다 우선하는지
 - Inbox에서 unassigned root meeting issue deep-link가 정상 동작하는지
+- Issues / AgentDetail이 participantAgentId 기반 참여 회의를 실제로 보여주는지
 - root meeting IssueProperties read-only와 MyIssues triage 제외가 유지되는지
 
 특히 UI가 raw issue comment plane과 orchestrated meeting plane을 섞어 쓰지 않는지, 그리고 legacy meeting thread fallback은 깨지지 않았는지 집중해서 봐 주세요.

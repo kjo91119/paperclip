@@ -809,7 +809,7 @@ export function IssueDetail() {
         <IssueProperties
           issue={issue}
           onUpdate={(data) => updateIssue.mutate(data)}
-          readOnly={issue.meetingMode === "orchestrated"}
+          readOnly={isOrchestratedMeeting}
         />
       );
     }
@@ -835,6 +835,8 @@ export function IssueDetail() {
   if (isLoading) return <p className="text-sm text-muted-foreground">불러오는 중...</p>;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
   if (!issue) return null;
+
+  const isOrchestratedMeeting = issue.meetingMode === "orchestrated";
 
   // Ancestors are returned oldest-first from the server (root at end, immediate parent at start)
   const ancestors = issue.ancestors ?? [];
@@ -935,7 +937,7 @@ export function IssueDetail() {
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <StatusIcon
             status={issue.status}
-            onChange={(status) => updateIssue.mutate({ status })}
+            onChange={isOrchestratedMeeting ? undefined : (status) => updateIssue.mutate({ status })}
           />
           <PriorityIcon
             priority={issue.priority}
@@ -1040,28 +1042,30 @@ export function IssueDetail() {
               <SlidersHorizontal className="h-4 w-4" />
             </Button>
 
-            <Popover open={moreOpen} onOpenChange={setMoreOpen}>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon-xs" className="shrink-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </PopoverTrigger>
-            <PopoverContent className="w-44 p-1" align="end">
-              <button
-                className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
-                onClick={() => {
-                  updateIssue.mutate(
-                    { hiddenAt: new Date().toISOString() },
-                    { onSuccess: () => navigate("/issues/all") },
-                  );
-                  setMoreOpen(false);
-                }}
-              >
-                <EyeOff className="h-3 w-3" />
-                이 이슈 숨기기
-              </button>
-            </PopoverContent>
-            </Popover>
+            {!isOrchestratedMeeting ? (
+              <Popover open={moreOpen} onOpenChange={setMoreOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon-xs" className="shrink-0">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </PopoverTrigger>
+              <PopoverContent className="w-44 p-1" align="end">
+                <button
+                  className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
+                  onClick={() => {
+                    updateIssue.mutate(
+                      { hiddenAt: new Date().toISOString() },
+                      { onSuccess: () => navigate("/issues/all") },
+                    );
+                    setMoreOpen(false);
+                  }}
+                >
+                  <EyeOff className="h-3 w-3" />
+                  이 이슈 숨기기
+                </button>
+              </PopoverContent>
+              </Popover>
+            ) : null}
           </div>
         </div>
 
@@ -1425,7 +1429,7 @@ export function IssueDetail() {
                 issue={issue}
                 onUpdate={(data) => updateIssue.mutate(data)}
                 inline
-                readOnly={issue.meetingMode === "orchestrated"}
+                readOnly={isOrchestratedMeeting}
               />
             </div>
           </ScrollArea>
