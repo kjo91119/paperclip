@@ -146,6 +146,14 @@ export {
 } from "./issue.js";
 
 export {
+  createMeetingSchema,
+  meetingStatusSchema,
+  meetingRoundKindSchema,
+  meetingRoundStatusSchema,
+  type CreateMeeting,
+} from "./meeting.js";
+
+export {
   createIssueWorkProductSchema,
   updateIssueWorkProductSchema,
   issueWorkProductTypeSchema,

@@ -96,6 +96,15 @@ export type {
   IssueAttachment,
   IssueLabel,
 } from "./issue.js";
+export type {
+  MeetingTranscriptEntryKind,
+  MeetingSummary,
+  MeetingParticipantSummary,
+  MeetingRoundSummary,
+  MeetingTranscriptEntry,
+  MeetingRoomIssueSummary,
+  MeetingRoomDTO,
+} from "./meeting.js";
 export type { Goal } from "./goal.js";
 export type { Approval, ApprovalComment } from "./approval.js";
 export type {

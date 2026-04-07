@@ -158,6 +158,7 @@ export function OfficeConversationPanel({
     const entries: Array<{
       id: string;
       body: string;
+      authorKind: "agent" | "user" | "system";
       authorAgentId: string | null;
       authorUserId: string | null;
       createdAt: Date | string;
@@ -168,6 +169,7 @@ export function OfficeConversationPanel({
       entries.push({
         id: `${selectedThreadIssue.id}:description`,
         body: selectedThreadIssue.description,
+        authorKind: selectedThreadIssue.createdByAgentId ? "agent" : "user",
         authorAgentId: selectedThreadIssue.createdByAgentId,
         authorUserId: selectedThreadIssue.createdByUserId,
         createdAt: selectedThreadIssue.createdAt,
@@ -179,6 +181,7 @@ export function OfficeConversationPanel({
       entries.push({
         id: comment.id,
         body: comment.body,
+        authorKind: comment.authorKind,
         authorAgentId: comment.authorAgentId,
         authorUserId: comment.authorUserId,
         createdAt: comment.createdAt,
@@ -593,6 +596,7 @@ function ThreadTimeline({
   entries: Array<{
     id: string;
     body: string;
+    authorKind: "agent" | "user" | "system";
     authorAgentId: string | null;
     authorUserId: string | null;
     createdAt: Date | string;
@@ -626,10 +630,12 @@ function ThreadTimeline({
           ) : entries.length > 0 ? (
             entries.map((entry) => {
               const authorName =
-                entry.authorAgentId
+                entry.authorKind === "agent" && entry.authorAgentId
                   ? agentById.get(entry.authorAgentId)?.name ?? "에이전트"
-                  : "나";
-              const isUser = !entry.authorAgentId;
+                  : entry.authorKind === "system"
+                    ? "시스템"
+                    : "나";
+              const isUser = entry.authorKind === "user";
 
               return (
                 <div

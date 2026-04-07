@@ -1,4 +1,13 @@
-import type { IssueOriginKind, IssuePriority, IssueStatus } from "../constants.js";
+import type {
+  IssueCommentAuthorKind,
+  IssueMeetingMode,
+  IssueMeetingRoundKind,
+  IssueMeetingStatus,
+  IssueOriginKind,
+  IssuePriority,
+  IssueStatus,
+  IssueSystemCommentKind,
+} from "../constants.js";
 import type { Goal } from "./goal.js";
 import type { Project, ProjectWorkspace } from "./project.js";
 import type { ExecutionWorkspace, IssueExecutionWorkspaceSettings } from "./workspace-runtime.js";
@@ -144,6 +153,12 @@ export interface Issue {
   myLastTouchAt?: Date | null;
   lastExternalCommentAt?: Date | null;
   isUnreadForMe?: boolean;
+  meetingId?: string | null;
+  meetingMode?: IssueMeetingMode | null;
+  meetingStatus?: IssueMeetingStatus | null;
+  meetingCurrentRoundNumber?: number | null;
+  meetingCurrentRoundKind?: IssueMeetingRoundKind | null;
+  meetingNeedsAttention?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -152,8 +167,11 @@ export interface IssueComment {
   id: string;
   companyId: string;
   issueId: string;
+  authorKind: IssueCommentAuthorKind;
   authorAgentId: string | null;
   authorUserId: string | null;
+  authorSystemKey: string | null;
+  systemCommentKind: IssueSystemCommentKind | null;
   body: string;
   createdAt: Date;
   updatedAt: Date;

@@ -36,7 +36,9 @@ export function MyIssues() {
 
   // This page surfaces open issues that still need an assignee.
   const myIssues = (issues ?? []).filter(
-    (i) => !i.assigneeAgentId && !["done", "cancelled"].includes(i.status),
+    (i) => !i.assigneeAgentId
+      && !["done", "cancelled"].includes(i.status)
+      && i.meetingMode !== "orchestrated",
   );
 
   return (

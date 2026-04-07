@@ -6,6 +6,7 @@ import { errorHandler } from "../middleware/index.js";
 
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
+  getMeetingIssueContext: vi.fn(async () => null),
   update: vi.fn(),
   addComment: vi.fn(),
   findMentionedAgents: vi.fn(),
@@ -88,8 +89,11 @@ describe("issue comment reopen routes", () => {
       body: "hello",
       createdAt: new Date(),
       updatedAt: new Date(),
+      authorKind: "user",
       authorAgentId: null,
       authorUserId: "local-board",
+      authorSystemKey: null,
+      systemCommentKind: null,
     });
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
   });

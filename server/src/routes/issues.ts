@@ -43,6 +43,16 @@ const MAX_ISSUE_COMMENT_LIMIT = 500;
 const updateIssueRouteSchema = updateIssueSchema.extend({
   interrupt: z.boolean().optional(),
 });
+const ROOT_MEETING_GUARDED_PATCH_FIELDS = [
+  "assigneeAgentId",
+  "assigneeUserId",
+  "status",
+  "hiddenAt",
+  "parentId",
+  "projectId",
+  "goalId",
+  "billingCode",
+] as const;
 
 export function issueRoutes(db: Db, storage: StorageService) {
   const router = Router();
@@ -225,6 +235,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
     }
 
     return { project, goal: null };
+  }
+
+  function isRootOrchestratedMeetingIssue(issue: { meetingMode?: string | null }) {
+    return issue.meetingMode === "orchestrated";
+  }
+
+  function hasRootMeetingInvariantPatch(body: Record<string, unknown>) {
+    return ROOT_MEETING_GUARDED_PATCH_FIELDS.some((field) => body[field] !== undefined);
   }
 
   // Resolve issue identifiers (e.g. "PAP-39") to UUIDs for all /issues/:id routes
@@ -1039,6 +1057,13 @@ export function issueRoutes(db: Db, storage: StorageService) {
     } = req.body;
     let interruptedRunId: string | null = null;
 
+    if (isRootOrchestratedMeetingIssue(existing)) {
+      if (hasRootMeetingInvariantPatch(req.body) || reopenRequested === true) {
+        res.status(422).json({ error: "Root meeting issue lifecycle is controlled by meeting endpoints" });
+        return;
+      }
+    }
+
     if (interruptRequested) {
       if (!commentBody) {
         res.status(400).json({ error: "Interrupt is only supported when posting a comment" });
@@ -1185,9 +1210,11 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     // Merge all wakeups from this update into one enqueue per agent to avoid duplicate runs.
     void (async () => {
+      const meetingIssueContext = await svc.getMeetingIssueContext(issue.id);
+      const suppressGenericWakeups = Boolean(meetingIssueContext);
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
 
-      if (assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
+      if (!suppressGenericWakeups && assigneeChanged && issue.assigneeAgentId && issue.status !== "backlog") {
         wakeups.set(issue.assigneeAgentId, {
           source: "assignment",
           triggerDetail: "system",
@@ -1207,7 +1234,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
-      if (!assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
+      if (!suppressGenericWakeups && !assigneeChanged && statusChangedFromBacklog && issue.assigneeAgentId) {
         wakeups.set(issue.assigneeAgentId, {
           source: "automation",
           triggerDetail: "system",
@@ -1227,7 +1254,7 @@ export function issueRoutes(db: Db, storage: StorageService) {
         });
       }
 
-      if (commentBody && comment) {
+      if (!suppressGenericWakeups && commentBody && comment) {
         let mentionedIds: string[] = [];
         try {
           mentionedIds = await svc.findMentionedAgents(issue.companyId, commentBody);
@@ -1275,6 +1302,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, existing.companyId);
+    if (isRootOrchestratedMeetingIssue(existing)) {
+      res.status(422).json({ error: "Root meeting issue lifecycle is controlled by meeting endpoints" });
+      return;
+    }
     const attachments = await svc.listAttachments(id);
 
     const issue = await svc.remove(id);
@@ -1314,6 +1345,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    if (isRootOrchestratedMeetingIssue(issue)) {
+      res.status(422).json({ error: "Root meeting issue lifecycle is controlled by meeting endpoints" });
+      return;
+    }
 
     if (issue.projectId) {
       const project = await projectsSvc.getById(issue.projectId);
@@ -1382,6 +1417,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, existing.companyId);
+    if (isRootOrchestratedMeetingIssue(existing)) {
+      res.status(422).json({ error: "Root meeting issue lifecycle is controlled by meeting endpoints" });
+      return;
+    }
     if (!(await assertAgentRunCheckoutOwnership(req, res, existing))) return;
     const actorRunId = requireAgentRunId(req, res);
     if (req.actor.type === "agent" && !actorRunId) return;
@@ -1470,6 +1509,10 @@ export function issueRoutes(db: Db, storage: StorageService) {
       return;
     }
     assertCompanyAccess(req, issue.companyId);
+    if (isRootOrchestratedMeetingIssue(issue) && req.body.reopen === true) {
+      res.status(422).json({ error: "Root meeting issue lifecycle is controlled by meeting endpoints" });
+      return;
+    }
     if (!(await assertAgentRunCheckoutOwnership(req, res, issue))) return;
 
     const actor = getActorInfo(req);
@@ -1567,12 +1610,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
 
     // Merge all wakeups from this comment into one enqueue per agent to avoid duplicate runs.
     void (async () => {
+      const meetingIssueContext = await svc.getMeetingIssueContext(currentIssue.id);
+      const suppressGenericWakeups = Boolean(meetingIssueContext);
       const wakeups = new Map<string, Parameters<typeof heartbeat.wakeup>[1]>();
       const assigneeId = currentIssue.assigneeAgentId;
       const actorIsAgent = actor.actorType === "agent";
       const selfComment = actorIsAgent && actor.actorId === assigneeId;
       const skipWake = selfComment || isClosed;
-      if (assigneeId && (reopened || !skipWake)) {
+      if (!suppressGenericWakeups && assigneeId && (reopened || !skipWake)) {
         if (reopened) {
           wakeups.set(assigneeId, {
             source: "automation",
@@ -1623,10 +1668,12 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
 
       let mentionedIds: string[] = [];
-      try {
-        mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
-      } catch (err) {
-        logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+      if (!suppressGenericWakeups) {
+        try {
+          mentionedIds = await svc.findMentionedAgents(issue.companyId, req.body.body);
+        } catch (err) {
+          logger.warn({ err, issueId: id }, "failed to resolve @-mentions");
+        }
       }
 
       for (const mentionedId of mentionedIds) {

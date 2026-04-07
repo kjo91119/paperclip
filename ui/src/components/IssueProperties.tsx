@@ -44,6 +44,7 @@ interface IssuePropertiesProps {
   issue: Issue;
   onUpdate: (data: Record<string, unknown>) => void;
   inline?: boolean;
+  readOnly?: boolean;
 }
 
 function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -117,7 +118,7 @@ function PropertyPicker({
   );
 }
 
-export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProps) {
+export function IssueProperties({ issue, onUpdate, inline, readOnly = false }: IssuePropertiesProps) {
   const { selectedCompanyId } = useCompany();
   const queryClient = useQueryClient();
   const companyId = issue.companyId ?? selectedCompanyId;
@@ -494,7 +495,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
         <PropertyRow label="상태">
           <StatusIcon
             status={issue.status}
-            onChange={(status) => onUpdate({ status })}
+            onChange={readOnly ? undefined : (status) => onUpdate({ status })}
             showLabel
           />
         </PropertyRow>
@@ -523,7 +524,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
           inline={inline}
           label="담당자"
           open={assigneeOpen}
-          onOpenChange={(open) => { setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
+          onOpenChange={(open) => { if (readOnly) return; setAssigneeOpen(open); if (!open) setAssigneeSearch(""); }}
           triggerContent={assigneeTrigger}
           popoverClassName="w-52"
           extra={issue.assigneeAgentId ? (
@@ -536,14 +537,14 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             </Link>
           ) : undefined}
         >
-          {assigneeContent}
+          {readOnly ? <div className="hidden" /> : assigneeContent}
         </PropertyPicker>
 
         <PropertyPicker
           inline={inline}
           label="프로젝트"
           open={projectOpen}
-          onOpenChange={(open) => { setProjectOpen(open); if (!open) setProjectSearch(""); }}
+          onOpenChange={(open) => { if (readOnly) return; setProjectOpen(open); if (!open) setProjectSearch(""); }}
           triggerContent={projectTrigger}
           triggerClassName="min-w-0 max-w-full"
           popoverClassName="w-fit min-w-[11rem]"
@@ -557,7 +558,7 @@ export function IssueProperties({ issue, onUpdate, inline }: IssuePropertiesProp
             </Link>
           ) : undefined}
         >
-          {projectContent}
+          {readOnly ? <div className="hidden" /> : projectContent}
         </PropertyPicker>
 
         {issue.parentId && (

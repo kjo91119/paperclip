@@ -154,13 +154,15 @@ function CommentCard({
       } ${isPending ? "opacity-80" : ""}`}
     >
       <div className="flex items-center justify-between mb-1">
-        {comment.authorAgentId ? (
+        {comment.authorKind === "agent" && comment.authorAgentId ? (
           <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
             <Identity
               name={agentMap?.get(comment.authorAgentId)?.name ?? comment.authorAgentId.slice(0, 8)}
               size="sm"
             />
           </Link>
+        ) : comment.authorKind === "system" ? (
+          <Identity name="시스템" size="sm" />
         ) : (
           <Identity name="나" size="sm" />
         )}

@@ -136,6 +136,69 @@ export type IssuePriority = (typeof ISSUE_PRIORITIES)[number];
 export const ISSUE_ORIGIN_KINDS = ["manual", "routine_execution"] as const;
 export type IssueOriginKind = (typeof ISSUE_ORIGIN_KINDS)[number];
 
+export const ISSUE_COMMENT_AUTHOR_KINDS = ["agent", "user", "system"] as const;
+export type IssueCommentAuthorKind = (typeof ISSUE_COMMENT_AUTHOR_KINDS)[number];
+
+export const ISSUE_SYSTEM_COMMENT_KINDS = [
+  "round_opened",
+  "round_closed",
+  "round_summary",
+  "control_notice",
+  "operator_attention",
+  "meeting_completed",
+] as const;
+export type IssueSystemCommentKind = (typeof ISSUE_SYSTEM_COMMENT_KINDS)[number];
+
+export const ISSUE_MEETING_MODES = ["legacy_thread", "orchestrated"] as const;
+export type IssueMeetingMode = (typeof ISSUE_MEETING_MODES)[number];
+
+export const ISSUE_MEETING_STATUSES = [
+  "draft",
+  "running",
+  "awaiting_operator",
+  "paused",
+  "completed",
+  "partial_completed",
+  "failed",
+  "cancelled",
+] as const;
+export type IssueMeetingStatus = (typeof ISSUE_MEETING_STATUSES)[number];
+
+export const ISSUE_MEETING_ROUND_KINDS = ["opening", "discussion", "summary", "followup"] as const;
+export type IssueMeetingRoundKind = (typeof ISSUE_MEETING_ROUND_KINDS)[number];
+
+export const ISSUE_MEETING_ROUND_STATUSES = [
+  "pending",
+  "dispatching",
+  "collecting",
+  "awaiting_operator",
+  "summarizing",
+  "completed",
+  "timed_out",
+  "cancelled",
+  "failed",
+] as const;
+export type IssueMeetingRoundStatus = (typeof ISSUE_MEETING_ROUND_STATUSES)[number];
+
+export const ISSUE_MEETING_PARTICIPANT_STATUSES = ["active", "removed"] as const;
+export type IssueMeetingParticipantStatus = (typeof ISSUE_MEETING_PARTICIPANT_STATUSES)[number];
+
+export const ISSUE_MEETING_ROUND_PARTICIPANT_STATUSES = [
+  "pending_dispatch",
+  "queued",
+  "coalesced",
+  "deferred",
+  "running",
+  "responded",
+  "timed_out",
+  "blocked",
+  "skipped",
+  "failed",
+  "late",
+] as const;
+export type IssueMeetingRoundParticipantStatus =
+  (typeof ISSUE_MEETING_ROUND_PARTICIPANT_STATUSES)[number];
+
 export const GOAL_LEVELS = ["company", "team", "agent", "task"] as const;
 export type GoalLevel = (typeof GOAL_LEVELS)[number];
 

@@ -14,6 +14,9 @@ import {
   issueInboxArchives,
   issueLabels,
   issueComments,
+  issueMeetings,
+  issueMeetingParticipants,
+  issueMeetingRounds,
   issueDocuments,
   issueReadStates,
   issues,
@@ -21,7 +24,16 @@ import {
   projectWorkspaces,
   projects,
 } from "@paperclipai/db";
-import { extractAgentMentionIds, extractProjectMentionIds } from "@paperclipai/shared";
+import {
+  extractAgentMentionIds,
+  extractProjectMentionIds,
+  type IssueCommentAuthorKind,
+  type IssueComment,
+  type IssueMeetingMode,
+  type IssueMeetingRoundKind,
+  type IssueMeetingStatus,
+  type IssueSystemCommentKind,
+} from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import {
   defaultIssueExecutionWorkspaceSettingsForProject,
@@ -62,6 +74,87 @@ function applyStatusSideEffects(
   return patch;
 }
 
+function deriveLegacyMeetingMode(description: string | null | undefined): IssueMeetingMode | null {
+  return (description ?? "").includes(LEGACY_MEETING_MARKER) ? "legacy_thread" : null;
+}
+
+function normalizeCommentAuthorKind(row: Pick<IssueCommentRow, "authorKind" | "authorAgentId" | "authorUserId">): IssueCommentAuthorKind {
+  if (row.authorKind === "agent" || row.authorKind === "user" || row.authorKind === "system") {
+    return row.authorKind;
+  }
+  if (row.authorAgentId) return "agent";
+  if (row.authorUserId) return "user";
+  return "system";
+}
+
+function normalizeIssueCommentRow(row: IssueCommentRow): IssueComment {
+  const authorKind = normalizeCommentAuthorKind(row);
+  return {
+    ...row,
+    authorKind,
+    authorSystemKey: row.authorSystemKey ?? (authorKind === "system" ? "legacy_unknown" : null),
+    systemCommentKind: (row.systemCommentKind as IssueSystemCommentKind | null) ?? null,
+  };
+}
+
+function validateIssueCommentActor(input: IssueCommentActorInput): {
+  authorKind: IssueCommentAuthorKind;
+  authorAgentId: string | null;
+  authorUserId: string | null;
+  authorSystemKey: string | null;
+  systemCommentKind: IssueSystemCommentKind | null;
+} {
+  const authorAgentId = input.agentId ?? null;
+  const authorUserId = input.userId ?? null;
+  const authorSystemKey = input.systemKey ?? null;
+  const systemCommentKind = input.systemCommentKind ?? null;
+  const nonNullKinds = [authorAgentId ? "agent" : null, authorUserId ? "user" : null, authorSystemKey ? "system" : null]
+    .filter((value): value is "agent" | "user" | "system" => value !== null);
+  if (nonNullKinds.length === 0) {
+    throw unprocessable("Issue comment author is required");
+  }
+  if (nonNullKinds.length > 1) {
+    throw unprocessable("Issue comment author must be exactly one of agent, user, or system");
+  }
+  const authorKind = nonNullKinds[0];
+  if (authorKind !== "system" && systemCommentKind) {
+    throw unprocessable("systemCommentKind requires a system-authored comment");
+  }
+  if (authorKind === "system" && !authorSystemKey) {
+    throw unprocessable("System-authored comments require authorSystemKey");
+  }
+  return {
+    authorKind,
+    authorAgentId,
+    authorUserId,
+    authorSystemKey,
+    systemCommentKind,
+  };
+}
+
+function issueCommentAuthorKindExpr() {
+  return sql<string>`COALESCE(
+    ${issueComments.authorKind},
+    CASE
+      WHEN ${issueComments.authorAgentId} IS NOT NULL THEN 'agent'
+      WHEN ${issueComments.authorUserId} IS NOT NULL THEN 'user'
+      ELSE 'system'
+    END
+  )`;
+}
+
+function issueCommentIsUnreadRelevantExpr() {
+  const authorKindExpr = issueCommentAuthorKindExpr();
+  return sql<boolean>`(
+    ${authorKindExpr} = 'agent'
+    OR ${authorKindExpr} = 'user'
+    OR (
+      ${authorKindExpr} = 'system'
+      AND ${issueComments.systemCommentKind} IN ('round_summary', 'operator_attention', 'meeting_completed')
+    )
+  )`;
+}
+
 export interface IssueFilters {
   status?: string;
   assigneeAgentId?: string;
@@ -81,6 +174,7 @@ export interface IssueFilters {
 }
 
 type IssueRow = typeof issues.$inferSelect;
+type IssueCommentRow = typeof issueComments.$inferSelect;
 type IssueLabelRow = typeof labels.$inferSelect;
 type IssueActiveRunRow = {
   id: string;
@@ -93,7 +187,16 @@ type IssueActiveRunRow = {
   createdAt: Date;
 };
 type IssueWithLabels = IssueRow & { labels: IssueLabelRow[]; labelIds: string[] };
-type IssueWithLabelsAndRun = IssueWithLabels & { activeRun: IssueActiveRunRow | null };
+type IssueMeetingMetadata = {
+  meetingId: string | null;
+  meetingMode: IssueMeetingMode | null;
+  meetingStatus: IssueMeetingStatus | null;
+  meetingCurrentRoundNumber: number | null;
+  meetingCurrentRoundKind: IssueMeetingRoundKind | null;
+  meetingNeedsAttention: boolean | null;
+};
+type IssueWithLabelsAndMeeting = IssueWithLabels & IssueMeetingMetadata;
+type IssueWithLabelsAndRun = IssueWithLabelsAndMeeting & { activeRun: IssueActiveRunRow | null };
 type IssueUserCommentStats = {
   issueId: string;
   myLastCommentAt: Date | null;
@@ -112,12 +215,34 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId"> & {
   inheritExecutionWorkspaceFromIssueId?: string | null;
 };
 
+type IssueCommentActorInput = {
+  agentId?: string | null;
+  userId?: string | null;
+  systemKey?: string | null;
+  systemCommentKind?: IssueSystemCommentKind | null;
+};
+
+type IssueCommentInsertInput = IssueCommentActorInput & {
+  body: string;
+};
+
+type IssueCommentOrchestratorContext = {
+  meetingId: string;
+  kind: "root" | "child";
+};
+
 function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
   if (actorRunId) return checkoutRunId === actorRunId;
   return checkoutRunId == null;
 }
 
 const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled", "timed_out"]);
+const LEGACY_MEETING_MARKER = "회의 형식: 전체회의";
+const NOTIFICATION_GRADE_SYSTEM_COMMENT_KINDS = new Set<IssueSystemCommentKind>([
+  "round_summary",
+  "operator_attention",
+  "meeting_completed",
+]);
 
 function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, "\\$&");
@@ -189,6 +314,16 @@ function participatedByAgentCondition(companyId: string, agentId: string) {
       OR ${issues.assigneeAgentId} = ${agentId}
       OR EXISTS (
         SELECT 1
+        FROM ${issueMeetingParticipants}
+        INNER JOIN ${issueMeetings}
+          ON ${issueMeetingParticipants.meetingId} = ${issueMeetings.id}
+        WHERE ${issueMeetings.rootIssueId} = ${issues.id}
+          AND ${issueMeetingParticipants.companyId} = ${companyId}
+          AND ${issueMeetings.companyId} = ${companyId}
+          AND ${issueMeetingParticipants.agentId} = ${agentId}
+      )
+      OR EXISTS (
+        SELECT 1
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.companyId} = ${companyId}
@@ -244,16 +379,14 @@ function myLastTouchAtExpr(companyId: string, userId: string) {
 }
 
 function lastExternalCommentAtExpr(companyId: string, userId: string) {
+  const unreadRelevantExpr = issueCommentIsUnreadRelevantExpr();
   return sql<Date | null>`
     (
       SELECT MAX(${issueComments.createdAt})
       FROM ${issueComments}
       WHERE ${issueComments.issueId} = ${issues.id}
         AND ${issueComments.companyId} = ${companyId}
-        AND (
-          ${issueComments.authorUserId} IS NULL
-          OR ${issueComments.authorUserId} <> ${userId}
-        )
+        AND ${unreadRelevantExpr}
     )
   `;
 }
@@ -276,6 +409,7 @@ function issueLastActivityAtExpr(companyId: string, userId: string) {
 function unreadForUserCondition(companyId: string, userId: string) {
   const touchedCondition = touchedByUserCondition(companyId, userId);
   const myLastTouchAt = myLastTouchAtExpr(companyId, userId);
+  const unreadRelevantExpr = issueCommentIsUnreadRelevantExpr();
   return sql<boolean>`
     (
       ${touchedCondition}
@@ -284,10 +418,7 @@ function unreadForUserCondition(companyId: string, userId: string) {
         FROM ${issueComments}
         WHERE ${issueComments.issueId} = ${issues.id}
           AND ${issueComments.companyId} = ${companyId}
-          AND (
-            ${issueComments.authorUserId} IS NULL
-            OR ${issueComments.authorUserId} <> ${userId}
-          )
+          AND ${unreadRelevantExpr}
           AND ${issueComments.createdAt} > ${myLastTouchAt}
       )
     )
@@ -417,11 +548,78 @@ async function withIssueLabels(dbOrTx: any, rows: IssueRow[]): Promise<IssueWith
   });
 }
 
+async function withIssueMeetingMetadata<T extends IssueWithLabels>(
+  dbOrTx: any,
+  rows: T[],
+): Promise<Array<T & IssueMeetingMetadata>> {
+  if (rows.length === 0) return [];
+
+  const issueIds = rows.map((row) => row.id);
+  const meetingRows = await dbOrTx
+    .select({
+      id: issueMeetings.id,
+      rootIssueId: issueMeetings.rootIssueId,
+      status: issueMeetings.status,
+      currentRoundNumber: issueMeetings.currentRoundNumber,
+    })
+    .from(issueMeetings)
+    .where(inArray(issueMeetings.rootIssueId, issueIds));
+
+  const meetingIds = meetingRows.map((row: { id: string }) => row.id);
+  const roundRows = meetingIds.length > 0
+    ? await dbOrTx
+      .select({
+        meetingId: issueMeetingRounds.meetingId,
+        roundNumber: issueMeetingRounds.roundNumber,
+        kind: issueMeetingRounds.kind,
+      })
+      .from(issueMeetingRounds)
+      .where(inArray(issueMeetingRounds.meetingId, meetingIds))
+    : [];
+
+  const roundsByMeeting = new Map<string, Array<{ roundNumber: number; kind: string }>>();
+  for (const row of roundRows) {
+    const existing = roundsByMeeting.get(row.meetingId);
+    if (existing) existing.push(row);
+    else roundsByMeeting.set(row.meetingId, [row]);
+  }
+
+  const orchestratedByIssueId = new Map<string, IssueMeetingMetadata>();
+  for (const meeting of meetingRows) {
+    const currentRound = roundsByMeeting.get(meeting.id)?.find((row) => row.roundNumber === meeting.currentRoundNumber) ?? null;
+    orchestratedByIssueId.set(meeting.rootIssueId, {
+      meetingId: meeting.id,
+      meetingMode: "orchestrated",
+      meetingStatus: meeting.status as IssueMeetingStatus,
+      meetingCurrentRoundNumber: meeting.currentRoundNumber,
+      meetingCurrentRoundKind: (currentRound?.kind as IssueMeetingRoundKind | undefined) ?? null,
+      meetingNeedsAttention: meeting.status === "awaiting_operator" || meeting.status === "failed",
+    });
+  }
+
+  return rows.map((row) => {
+    const orchestrated = orchestratedByIssueId.get(row.id);
+    if (orchestrated) {
+      return { ...row, ...orchestrated };
+    }
+    const legacyMode = deriveLegacyMeetingMode(row.description);
+    return {
+      ...row,
+      meetingId: null,
+      meetingMode: legacyMode,
+      meetingStatus: null,
+      meetingCurrentRoundNumber: null,
+      meetingCurrentRoundKind: null,
+      meetingNeedsAttention: null,
+    };
+  });
+}
+
 const ACTIVE_RUN_STATUSES = ["queued", "running"];
 
 async function activeRunMapForIssues(
   dbOrTx: any,
-  issueRows: IssueWithLabels[],
+  issueRows: Array<IssueWithLabelsAndMeeting>,
 ): Promise<Map<string, IssueActiveRunRow>> {
   const map = new Map<string, IssueActiveRunRow>();
   const runIds = issueRows
@@ -455,7 +653,7 @@ async function activeRunMapForIssues(
 }
 
 function withActiveRuns(
-  issueRows: IssueWithLabels[],
+  issueRows: IssueWithLabelsAndMeeting[],
   runMap: Map<string, IssueActiveRunRow>,
 ): IssueWithLabelsAndRun[] {
   return issueRows.map((row) => ({
@@ -705,6 +903,199 @@ export function issueService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
+  async function createIssueInTx(
+    tx: any,
+    companyId: string,
+    data: IssueCreateInput,
+  ) {
+    const { labelIds: inputLabelIds, inheritExecutionWorkspaceFromIssueId, ...issueData } = data;
+    const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
+    if (!isolatedWorkspacesEnabled) {
+      delete issueData.executionWorkspaceId;
+      delete issueData.executionWorkspacePreference;
+      delete issueData.executionWorkspaceSettings;
+    }
+    if (data.assigneeAgentId && data.assigneeUserId) {
+      throw unprocessable("Issue can only have one assignee");
+    }
+    if (data.assigneeAgentId) {
+      await assertAssignableAgent(companyId, data.assigneeAgentId);
+    }
+    if (data.assigneeUserId) {
+      await assertAssignableUser(companyId, data.assigneeUserId);
+    }
+    if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
+      throw unprocessable("in_progress issues require an assignee");
+    }
+
+    const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
+    const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
+    let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
+    let executionWorkspaceId = issueData.executionWorkspaceId ?? null;
+    let executionWorkspacePreference = issueData.executionWorkspacePreference ?? null;
+    let executionWorkspaceSettings =
+      (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
+    const workspaceInheritanceIssueId = inheritExecutionWorkspaceFromIssueId ?? issueData.parentId ?? null;
+    const hasExplicitExecutionWorkspaceOverride =
+      issueData.executionWorkspaceId !== undefined ||
+      issueData.executionWorkspacePreference !== undefined ||
+      issueData.executionWorkspaceSettings !== undefined;
+    if (workspaceInheritanceIssueId) {
+      const workspaceSource = await getWorkspaceInheritanceIssue(tx, companyId, workspaceInheritanceIssueId);
+      if (projectWorkspaceId == null && workspaceSource.projectWorkspaceId) {
+        projectWorkspaceId = workspaceSource.projectWorkspaceId;
+      }
+      if (
+        isolatedWorkspacesEnabled &&
+        !hasExplicitExecutionWorkspaceOverride &&
+        workspaceSource.executionWorkspaceId
+      ) {
+        const sourceWorkspace = await tx
+          .select({
+            id: executionWorkspaces.id,
+            mode: executionWorkspaces.mode,
+          })
+          .from(executionWorkspaces)
+          .where(eq(executionWorkspaces.id, workspaceSource.executionWorkspaceId))
+          .then((rows: Array<{ id: string; mode: string }>) => rows[0] ?? null);
+        if (sourceWorkspace) {
+          executionWorkspaceId = sourceWorkspace.id;
+          executionWorkspacePreference = "reuse_existing";
+          executionWorkspaceSettings = {
+            ...((workspaceSource.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? {}),
+            mode: issueExecutionWorkspaceModeForPersistedWorkspace(sourceWorkspace.mode),
+          };
+        }
+      }
+    }
+    if (
+      executionWorkspaceSettings == null &&
+      executionWorkspaceId == null &&
+      issueData.projectId
+    ) {
+      const project = await tx
+        .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
+        .from(projects)
+        .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
+        .then((rows: Array<{ executionWorkspacePolicy: unknown }>) => rows[0] ?? null);
+      executionWorkspaceSettings =
+        defaultIssueExecutionWorkspaceSettingsForProject(
+          gateProjectExecutionWorkspacePolicy(
+            parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy),
+            isolatedWorkspacesEnabled,
+          ),
+        ) as Record<string, unknown> | null;
+    }
+    if (!projectWorkspaceId && issueData.projectId) {
+      const project = await tx
+        .select({
+          executionWorkspacePolicy: projects.executionWorkspacePolicy,
+        })
+        .from(projects)
+        .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
+        .then((rows: Array<{ executionWorkspacePolicy: unknown }>) => rows[0] ?? null);
+      const projectPolicy = parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy);
+      projectWorkspaceId = projectPolicy?.defaultProjectWorkspaceId ?? null;
+      if (!projectWorkspaceId) {
+        projectWorkspaceId = await tx
+          .select({ id: projectWorkspaces.id })
+          .from(projectWorkspaces)
+          .where(and(eq(projectWorkspaces.projectId, issueData.projectId), eq(projectWorkspaces.companyId, companyId)))
+          .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id))
+          .then((rows: Array<{ id: string }>) => rows[0]?.id ?? null);
+      }
+    }
+    if (projectWorkspaceId) {
+      await assertValidProjectWorkspace(companyId, issueData.projectId, projectWorkspaceId, tx);
+    }
+    if (executionWorkspaceId) {
+      await assertValidExecutionWorkspace(companyId, issueData.projectId, executionWorkspaceId, tx);
+    }
+    const [company] = await tx
+      .update(companies)
+      .set({ issueCounter: sql`${companies.issueCounter} + 1` })
+      .where(eq(companies.id, companyId))
+      .returning({ issueCounter: companies.issueCounter, issuePrefix: companies.issuePrefix });
+
+    const issueNumber = company.issueCounter;
+    const identifier = `${company.issuePrefix}-${issueNumber}`;
+
+    const values = {
+      ...issueData,
+      originKind: issueData.originKind ?? "manual",
+      goalId: resolveIssueGoalId({
+        projectId: issueData.projectId,
+        goalId: issueData.goalId,
+        projectGoalId,
+        defaultGoalId: defaultCompanyGoal?.id ?? null,
+      }),
+      ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
+      ...(executionWorkspaceId ? { executionWorkspaceId } : {}),
+      ...(executionWorkspacePreference ? { executionWorkspacePreference } : {}),
+      ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
+      companyId,
+      issueNumber,
+      identifier,
+    } as typeof issues.$inferInsert;
+    if (values.status === "in_progress" && !values.startedAt) {
+      values.startedAt = new Date();
+    }
+    if (values.status === "done") {
+      values.completedAt = new Date();
+    }
+    if (values.status === "cancelled") {
+      values.cancelledAt = new Date();
+    }
+
+    const [issue] = await tx.insert(issues).values(values).returning();
+    if (inputLabelIds) {
+      await syncIssueLabels(issue.id, companyId, inputLabelIds, tx);
+    }
+    const [withLabelsRow] = await withIssueLabels(tx, [issue]);
+    const [enriched] = await withIssueMeetingMetadata(tx, [withLabelsRow]);
+    return enriched;
+  }
+
+  async function addIssueCommentInTx(
+    tx: any,
+    issueId: string,
+    input: IssueCommentInsertInput,
+  ) {
+    const issue = await tx
+      .select({ companyId: issues.companyId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows: Array<{ companyId: string }>) => rows[0] ?? null);
+
+    if (!issue) throw notFound("Issue not found");
+
+    const currentUserRedactionOptions = {
+      enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
+    };
+    const author = validateIssueCommentActor(input);
+    const redactedBody = redactCurrentUserText(input.body, currentUserRedactionOptions);
+    const [comment] = await tx
+      .insert(issueComments)
+      .values({
+        companyId: issue.companyId,
+        issueId,
+        authorKind: author.authorKind,
+        authorAgentId: author.authorAgentId,
+        authorUserId: author.authorUserId,
+        authorSystemKey: author.authorSystemKey,
+        systemCommentKind: author.systemCommentKind,
+        body: redactedBody,
+      })
+      .returning();
+
+    await tx
+      .update(issues)
+      .set({ updatedAt: new Date() })
+      .where(eq(issues.id, issueId));
+
+    return redactIssueComment(normalizeIssueCommentRow(comment), currentUserRedactionOptions.enabled);
+  }
+
   return {
     list: async (companyId: string, filters?: IssueFilters) => {
       const conditions = [eq(issues.companyId, companyId)];
@@ -801,8 +1192,9 @@ export function issueService(db: Db) {
         .where(and(...conditions))
         .orderBy(hasSearch ? asc(searchOrder) : asc(priorityOrder), asc(priorityOrder), desc(issues.updatedAt));
       const withLabels = await withIssueLabels(db, rows);
-      const runMap = await activeRunMapForIssues(db, withLabels);
-      const withRuns = withActiveRuns(withLabels, runMap);
+      const withMeetingMetadata = await withIssueMeetingMetadata(db, withLabels);
+      const runMap = await activeRunMapForIssues(db, withMeetingMetadata);
+      const withRuns = withActiveRuns(withMeetingMetadata, runMap);
       if (!contextUserId || withRuns.length === 0) {
         return withRuns;
       }
@@ -817,7 +1209,7 @@ export function issueService(db: Db) {
           lastExternalCommentAt: sql<Date | null>`
             MAX(
               CASE
-                WHEN ${issueComments.authorUserId} IS NULL OR ${issueComments.authorUserId} <> ${contextUserId}
+                WHEN ${issueCommentIsUnreadRelevantExpr()}
                 THEN ${issueComments.createdAt}
               END
             )
@@ -958,7 +1350,8 @@ export function issueService(db: Db) {
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      const [enriched] = await withIssueLabels(db, [row]);
+      const [withLabelsRow] = await withIssueLabels(db, [row]);
+      const [enriched] = await withIssueMeetingMetadata(db, [withLabelsRow]);
       return enriched;
     },
 
@@ -969,161 +1362,19 @@ export function issueService(db: Db) {
         .where(eq(issues.identifier, identifier.toUpperCase()))
         .then((rows) => rows[0] ?? null);
       if (!row) return null;
-      const [enriched] = await withIssueLabels(db, [row]);
+      const [withLabelsRow] = await withIssueLabels(db, [row]);
+      const [enriched] = await withIssueMeetingMetadata(db, [withLabelsRow]);
       return enriched;
     },
+
+    createInTx: createIssueInTx,
+
+    addCommentInTx: addIssueCommentInTx,
 
     create: async (
       companyId: string,
       data: IssueCreateInput,
-    ) => {
-      const { labelIds: inputLabelIds, inheritExecutionWorkspaceFromIssueId, ...issueData } = data;
-      const isolatedWorkspacesEnabled = (await instanceSettings.getExperimental()).enableIsolatedWorkspaces;
-      if (!isolatedWorkspacesEnabled) {
-        delete issueData.executionWorkspaceId;
-        delete issueData.executionWorkspacePreference;
-        delete issueData.executionWorkspaceSettings;
-      }
-      if (data.assigneeAgentId && data.assigneeUserId) {
-        throw unprocessable("Issue can only have one assignee");
-      }
-      if (data.assigneeAgentId) {
-        await assertAssignableAgent(companyId, data.assigneeAgentId);
-      }
-      if (data.assigneeUserId) {
-        await assertAssignableUser(companyId, data.assigneeUserId);
-      }
-      if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
-        throw unprocessable("in_progress issues require an assignee");
-      }
-      return db.transaction(async (tx) => {
-        const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
-        const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
-        let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
-        let executionWorkspaceId = issueData.executionWorkspaceId ?? null;
-        let executionWorkspacePreference = issueData.executionWorkspacePreference ?? null;
-        let executionWorkspaceSettings =
-          (issueData.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? null;
-        const workspaceInheritanceIssueId = inheritExecutionWorkspaceFromIssueId ?? issueData.parentId ?? null;
-        const hasExplicitExecutionWorkspaceOverride =
-          issueData.executionWorkspaceId !== undefined ||
-          issueData.executionWorkspacePreference !== undefined ||
-          issueData.executionWorkspaceSettings !== undefined;
-        if (workspaceInheritanceIssueId) {
-          const workspaceSource = await getWorkspaceInheritanceIssue(tx, companyId, workspaceInheritanceIssueId);
-          if (projectWorkspaceId == null && workspaceSource.projectWorkspaceId) {
-            projectWorkspaceId = workspaceSource.projectWorkspaceId;
-          }
-          if (
-            isolatedWorkspacesEnabled &&
-            !hasExplicitExecutionWorkspaceOverride &&
-            workspaceSource.executionWorkspaceId
-          ) {
-            const sourceWorkspace = await tx
-              .select({
-                id: executionWorkspaces.id,
-                mode: executionWorkspaces.mode,
-              })
-              .from(executionWorkspaces)
-              .where(eq(executionWorkspaces.id, workspaceSource.executionWorkspaceId))
-              .then((rows) => rows[0] ?? null);
-            if (sourceWorkspace) {
-              executionWorkspaceId = sourceWorkspace.id;
-              executionWorkspacePreference = "reuse_existing";
-              executionWorkspaceSettings = {
-                ...((workspaceSource.executionWorkspaceSettings as Record<string, unknown> | null | undefined) ?? {}),
-                mode: issueExecutionWorkspaceModeForPersistedWorkspace(sourceWorkspace.mode),
-              };
-            }
-          }
-        }
-        if (
-          executionWorkspaceSettings == null &&
-          executionWorkspaceId == null &&
-          issueData.projectId
-        ) {
-          const project = await tx
-            .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
-            .from(projects)
-            .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
-            .then((rows) => rows[0] ?? null);
-          executionWorkspaceSettings =
-            defaultIssueExecutionWorkspaceSettingsForProject(
-              gateProjectExecutionWorkspacePolicy(
-                parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy),
-                isolatedWorkspacesEnabled,
-              ),
-            ) as Record<string, unknown> | null;
-        }
-        if (!projectWorkspaceId && issueData.projectId) {
-          const project = await tx
-            .select({
-              executionWorkspacePolicy: projects.executionWorkspacePolicy,
-            })
-            .from(projects)
-            .where(and(eq(projects.id, issueData.projectId), eq(projects.companyId, companyId)))
-            .then((rows) => rows[0] ?? null);
-          const projectPolicy = parseProjectExecutionWorkspacePolicy(project?.executionWorkspacePolicy);
-          projectWorkspaceId = projectPolicy?.defaultProjectWorkspaceId ?? null;
-          if (!projectWorkspaceId) {
-            projectWorkspaceId = await tx
-              .select({ id: projectWorkspaces.id })
-              .from(projectWorkspaces)
-              .where(and(eq(projectWorkspaces.projectId, issueData.projectId), eq(projectWorkspaces.companyId, companyId)))
-              .orderBy(desc(projectWorkspaces.isPrimary), asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id))
-              .then((rows) => rows[0]?.id ?? null);
-          }
-        }
-        if (projectWorkspaceId) {
-          await assertValidProjectWorkspace(companyId, issueData.projectId, projectWorkspaceId, tx);
-        }
-        if (executionWorkspaceId) {
-          await assertValidExecutionWorkspace(companyId, issueData.projectId, executionWorkspaceId, tx);
-        }
-        const [company] = await tx
-          .update(companies)
-          .set({ issueCounter: sql`${companies.issueCounter} + 1` })
-          .where(eq(companies.id, companyId))
-          .returning({ issueCounter: companies.issueCounter, issuePrefix: companies.issuePrefix });
-
-        const issueNumber = company.issueCounter;
-        const identifier = `${company.issuePrefix}-${issueNumber}`;
-
-        const values = {
-          ...issueData,
-          originKind: issueData.originKind ?? "manual",
-          goalId: resolveIssueGoalId({
-            projectId: issueData.projectId,
-            goalId: issueData.goalId,
-            projectGoalId,
-            defaultGoalId: defaultCompanyGoal?.id ?? null,
-          }),
-          ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
-          ...(executionWorkspaceId ? { executionWorkspaceId } : {}),
-          ...(executionWorkspacePreference ? { executionWorkspacePreference } : {}),
-          ...(executionWorkspaceSettings ? { executionWorkspaceSettings } : {}),
-          companyId,
-          issueNumber,
-          identifier,
-        } as typeof issues.$inferInsert;
-        if (values.status === "in_progress" && !values.startedAt) {
-          values.startedAt = new Date();
-        }
-        if (values.status === "done") {
-          values.completedAt = new Date();
-        }
-        if (values.status === "cancelled") {
-          values.cancelledAt = new Date();
-        }
-
-        const [issue] = await tx.insert(issues).values(values).returning();
-        if (inputLabelIds) {
-          await syncIssueLabels(issue.id, companyId, inputLabelIds, tx);
-        }
-        const [enriched] = await withIssueLabels(tx, [issue]);
-        return enriched;
-      });
-    },
+    ) => db.transaction((tx) => createIssueInTx(tx, companyId, data)),
 
     update: async (id: string, data: Partial<typeof issues.$inferInsert> & { labelIds?: string[] }) => {
       const existing = await db
@@ -1225,7 +1476,8 @@ export function issueService(db: Db) {
         if (nextLabelIds !== undefined) {
           await syncIssueLabels(updated.id, existing.companyId, nextLabelIds, tx);
         }
-        const [enriched] = await withIssueLabels(tx, [updated]);
+        const [withLabelsRow] = await withIssueLabels(tx, [updated]);
+        const [enriched] = await withIssueMeetingMetadata(tx, [withLabelsRow]);
         return enriched;
       });
     },
@@ -1581,7 +1833,7 @@ export function issueService(db: Db) {
 
       const comments = limit ? await query.limit(limit) : await query;
       const { censorUsernameInLogs } = await instanceSettings.getGeneral();
-      return comments.map((comment) => redactIssueComment(comment, censorUsernameInLogs));
+      return comments.map((comment) => redactIssueComment(normalizeIssueCommentRow(comment), censorUsernameInLogs));
     },
 
     getCommentCursor: async (issueId: string) => {
@@ -1620,41 +1872,11 @@ export function issueService(db: Db) {
         .where(eq(issueComments.id, commentId))
         .then((rows) => {
           const comment = rows[0] ?? null;
-          return comment ? redactIssueComment(comment, censorUsernameInLogs) : null;
+          return comment ? redactIssueComment(normalizeIssueCommentRow(comment), censorUsernameInLogs) : null;
         })),
 
-    addComment: async (issueId: string, body: string, actor: { agentId?: string; userId?: string }) => {
-      const issue = await db
-        .select({ companyId: issues.companyId })
-        .from(issues)
-        .where(eq(issues.id, issueId))
-        .then((rows) => rows[0] ?? null);
-
-      if (!issue) throw notFound("Issue not found");
-
-      const currentUserRedactionOptions = {
-        enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
-      };
-      const redactedBody = redactCurrentUserText(body, currentUserRedactionOptions);
-      const [comment] = await db
-        .insert(issueComments)
-        .values({
-          companyId: issue.companyId,
-          issueId,
-          authorAgentId: actor.agentId ?? null,
-          authorUserId: actor.userId ?? null,
-          body: redactedBody,
-        })
-        .returning();
-
-      // Update issue's updatedAt so comment activity is reflected in recency sorting
-      await db
-        .update(issues)
-        .set({ updatedAt: new Date() })
-        .where(eq(issues.id, issueId));
-
-      return redactIssueComment(comment, currentUserRedactionOptions.enabled);
-    },
+    addComment: async (issueId: string, body: string, actor: IssueCommentActorInput) =>
+      db.transaction((tx) => addIssueCommentInTx(tx, issueId, { body, ...actor })),
 
     createAttachment: async (input: {
       issueId: string;
@@ -1811,6 +2033,38 @@ export function issueService(db: Db) {
         await tx.delete(assets).where(eq(assets.id, existing.assetId));
         return existing;
       }),
+
+    getMeetingIssueContext: async (issueId: string): Promise<IssueCommentOrchestratorContext | null> => {
+      const rootMeeting = await db
+        .select({
+          meetingId: issueMeetings.id,
+        })
+        .from(issueMeetings)
+        .where(eq(issueMeetings.rootIssueId, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (rootMeeting) {
+        return {
+          meetingId: rootMeeting.meetingId,
+          kind: "root",
+        };
+      }
+
+      const childMeeting = await db
+        .select({
+          meetingId: issueMeetingParticipants.meetingId,
+        })
+        .from(issueMeetingParticipants)
+        .where(eq(issueMeetingParticipants.childIssueId, issueId))
+        .then((rows) => rows[0] ?? null);
+      if (childMeeting) {
+        return {
+          meetingId: childMeeting.meetingId,
+          kind: "child",
+        };
+      }
+
+      return null;
+    },
 
     findMentionedAgents: async (companyId: string, body: string) => {
       const re = /\B@([^\s@,!?.]+)/g;
