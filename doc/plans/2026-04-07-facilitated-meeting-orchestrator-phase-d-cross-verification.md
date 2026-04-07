@@ -133,7 +133,9 @@
 - `server/src/services/meetings.ts`
 - `server/src/routes/meetings.ts`
 - `server/src/routes/authz.ts`
+- `server/src/services/activity-log.ts`
 - `server/src/services/heartbeat.ts`
+- `server/src/services/issues.ts`
 - `server/src/__tests__/meetings-service.test.ts`
 - `packages/shared/src/validators/meeting.ts`
 - `packages/shared/src/types/meeting.ts`
@@ -163,7 +165,7 @@
   - `813` tests passed
   - `2` skipped
 - 실패:
-  - `src/__tests__/company-import-export-e2e.test.ts`
+  - `cli/src/__tests__/company-import-export-e2e.test.ts`
   - `/api/health` 대기 timeout
 
 즉, 이번 handoff 기준에서는 Phase D 자체 흐름은 통과했지만 workspace 전체 green은 아직 보장하지 못하므로 `Conditional Pass`가 맞다.

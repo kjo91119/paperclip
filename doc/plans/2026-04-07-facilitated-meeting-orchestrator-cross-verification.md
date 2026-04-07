@@ -322,7 +322,8 @@ Round 2 상호 토론, followup, partial proceed, late response를 중점 검토
 - `server/src/routes/meetings.ts`
 - `server/src/routes/authz.ts`
 - `server/src/services/activity-log.ts`
-- `server/src/services/meeting-orchestrator*`
+- `server/src/services/meetings.ts`
+- `server/src/services/heartbeat.ts`
 - `server/src/services/issues.ts`
 - 관련 summary projection / transcript DTO / tests
 
