@@ -1547,14 +1547,20 @@ export function Inbox() {
                 const isUnread = issue.isUnreadForMe && !fadingOutIssues.has(issue.id);
                 const isFading = fadingOutIssues.has(issue.id);
                 const isArchiving = archivingIssueIds.has(issue.id);
-                const officeConversationPath = issue.assigneeAgentId
+                const officeConversationPath = isOfficeMeetingIssue(issue)
                   ? createOfficeConversationPath({
-                      mode: isOfficeMeetingIssue(issue) ? "meeting" : "direct",
-                      agentId: issue.assigneeAgentId,
+                      mode: "meeting",
                       issueId: issue.id,
                       projectId: issue.projectId,
                     })
-                  : null;
+                  : issue.assigneeAgentId
+                    ? createOfficeConversationPath({
+                        mode: "direct",
+                        agentId: issue.assigneeAgentId,
+                        issueId: issue.id,
+                        projectId: issue.projectId,
+                      })
+                    : null;
                 const row = (
                   <div
                     key={`issue:${issue.id}`}
@@ -1615,7 +1621,7 @@ export function Inbox() {
                           to={officeConversationPath}
                           className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         >
-                          {isOfficeMeetingIssue(issue) ? "회의에서 열기" : "대화에서 열기"}
+                          {isOfficeMeetingIssue(issue) ? "회의실에서 열기" : "대화에서 열기"}
                         </Link>
                       </div>
                     ) : null}

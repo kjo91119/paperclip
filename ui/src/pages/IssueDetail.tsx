@@ -3,6 +3,7 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { meetingsApi } from "../api/meetings";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -28,6 +29,7 @@ import { useProjectOrder } from "../hooks/useProjectOrder";
 import { relativeTime, cn, formatPriorityLabel, formatStatusLabel, formatTokens, visibleRunCostUsd } from "../lib/utils";
 import { InlineEditor } from "../components/InlineEditor";
 import { CommentThread } from "../components/CommentThread";
+import { MeetingRoomPanel } from "../components/MeetingRoomPanel";
 import { IssueDocumentsSection } from "../components/IssueDocumentsSection";
 import { IssueProperties } from "../components/IssueProperties";
 import { IssueWorkspaceCard } from "../components/IssueWorkspaceCard";
@@ -235,7 +237,14 @@ export function IssueDetail() {
   const { data: comments } = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),
     queryFn: () => issuesApi.listComments(issueId!),
-    enabled: !!issueId,
+    enabled: !!issueId && issue?.meetingMode !== "orchestrated",
+  });
+
+  const meetingRoomQuery = useQuery({
+    queryKey: issue ? queryKeys.meetings.byIssue(issue.id) : ["meetings", "issue", issueId ?? "__pending__"],
+    queryFn: () => meetingsApi.getByIssue(issue!.id),
+    enabled: Boolean(issue?.id) && issue?.meetingMode === "orchestrated",
+    refetchInterval: issue?.meetingMode === "orchestrated" ? 5000 : false,
   });
 
   const { data: activity } = useQuery({
@@ -1212,7 +1221,7 @@ export function IssueDetail() {
         <TabsList variant="line" className="w-full justify-start gap-1">
           <TabsTrigger value="comments" className="gap-1.5">
             <MessageSquare className="h-3.5 w-3.5" />
-            댓글
+            {issue.meetingMode === "orchestrated" ? "회의실" : "댓글"}
           </TabsTrigger>
           <TabsTrigger value="subissues" className="gap-1.5">
             <ListTree className="h-3.5 w-3.5" />
@@ -1230,40 +1239,52 @@ export function IssueDetail() {
         </TabsList>
 
         <TabsContent value="comments">
-          <CommentThread
-            comments={timelineComments}
-            queuedComments={queuedComments}
-            linkedRuns={timelineRuns}
-            companyId={issue.companyId}
-            projectId={issue.projectId}
-            issueStatus={issue.status}
-            agentMap={agentMap}
-            draftKey={`paperclip:issue-comment-draft:${issue.id}`}
-            enableReassign
-            reassignOptions={commentReassignOptions}
-            currentAssigneeValue={actualAssigneeValue}
-            suggestedAssigneeValue={suggestedAssigneeValue}
-            mentions={mentionOptions}
-            onInterruptQueued={async (runId) => {
-              await interruptQueuedComment.mutateAsync(runId);
-            }}
-            interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
-            onAdd={async (body, reopen, reassignment) => {
-              if (reassignment) {
-                await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
-                return;
-              }
-              await addComment.mutateAsync({ body, reopen });
-            }}
-            imageUploadHandler={async (file) => {
-              const attachment = await uploadAttachment.mutateAsync(file);
-              return attachment.contentPath;
-            }}
-            onAttachImage={async (file) => {
-              await uploadAttachment.mutateAsync(file);
-            }}
-            liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
-          />
+          {issue.meetingMode === "orchestrated" ? (
+            meetingRoomQuery.isLoading ? (
+              <p className="text-sm text-muted-foreground">회의실을 불러오는 중...</p>
+            ) : meetingRoomQuery.error instanceof Error ? (
+              <p className="text-sm text-destructive">{meetingRoomQuery.error.message}</p>
+            ) : meetingRoomQuery.data ? (
+              <MeetingRoomPanel issue={issue} room={meetingRoomQuery.data} agentById={agentMap} />
+            ) : (
+              <p className="text-sm text-muted-foreground">회의실 데이터를 찾지 못했습니다.</p>
+            )
+          ) : (
+            <CommentThread
+              comments={timelineComments}
+              queuedComments={queuedComments}
+              linkedRuns={timelineRuns}
+              companyId={issue.companyId}
+              projectId={issue.projectId}
+              issueStatus={issue.status}
+              agentMap={agentMap}
+              draftKey={`paperclip:issue-comment-draft:${issue.id}`}
+              enableReassign
+              reassignOptions={commentReassignOptions}
+              currentAssigneeValue={actualAssigneeValue}
+              suggestedAssigneeValue={suggestedAssigneeValue}
+              mentions={mentionOptions}
+              onInterruptQueued={async (runId) => {
+                await interruptQueuedComment.mutateAsync(runId);
+              }}
+              interruptingQueuedRunId={interruptQueuedComment.isPending ? runningIssueRun?.id ?? null : null}
+              onAdd={async (body, reopen, reassignment) => {
+                if (reassignment) {
+                  await addCommentAndReassign.mutateAsync({ body, reopen, reassignment });
+                  return;
+                }
+                await addComment.mutateAsync({ body, reopen });
+              }}
+              imageUploadHandler={async (file) => {
+                const attachment = await uploadAttachment.mutateAsync(file);
+                return attachment.contentPath;
+              }}
+              onAttachImage={async (file) => {
+                await uploadAttachment.mutateAsync(file);
+              }}
+              liveRunSlot={<LiveRunWidget issueId={issueId!} companyId={issue.companyId} />}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="subissues">

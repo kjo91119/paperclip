@@ -180,6 +180,7 @@ export function listOfficeConversationIssues(params: {
 }
 
 export function isOfficeMeetingIssue(issue: Issue): boolean {
+  if (issue.meetingMode === "orchestrated" || issue.meetingMode === "legacy_thread") return true;
   return (issue.description ?? "").includes("회의 형식: 전체회의");
 }
 

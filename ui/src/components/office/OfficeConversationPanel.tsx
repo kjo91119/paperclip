@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode, type RefObject } from "react";
 import { Link } from "@/lib/router";
-import type { Agent, Issue, IssueComment, Project } from "@paperclipai/shared";
+import type { Agent, Issue, IssueComment, MeetingRoomDTO, Project } from "@paperclipai/shared";
 import {
   ArrowUpRight,
   Bot,
@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { MarkdownBody } from "../MarkdownBody";
+import { MeetingRoomPanel } from "../MeetingRoomPanel";
 import { LiveRunWidget } from "../LiveRunWidget";
 import { cn, formatDateTime, formatStatusLabel, issueUrl, projectUrl, relativeTime } from "../../lib/utils";
 import {
@@ -56,6 +57,9 @@ export function OfficeConversationPanel({
   threadComments,
   threadCommentsLoading,
   threadCommentsError,
+  threadMeetingRoom,
+  threadMeetingRoomLoading,
+  threadMeetingRoomError,
   selectedProject,
   selectedProjectId,
   projects,
@@ -109,6 +113,9 @@ export function OfficeConversationPanel({
   threadComments: IssueComment[];
   threadCommentsLoading: boolean;
   threadCommentsError: string | null;
+  threadMeetingRoom: MeetingRoomDTO | null;
+  threadMeetingRoomLoading: boolean;
+  threadMeetingRoomError: string | null;
   selectedProject: Project | null;
   selectedProjectId: string;
   projects: Project[];
@@ -201,7 +208,7 @@ export function OfficeConversationPanel({
           </div>
           <h2 className="text-sm font-semibold text-foreground">대화 패널</h2>
           <p className="max-w-3xl text-xs text-muted-foreground">
-            이슈/댓글 모델은 유지한 채, 에이전트 DM과 전체회의를 채팅형으로 렌더링합니다.
+            에이전트 DM은 이슈/댓글 스레드로, 전체회의는 orchestrated meeting room으로 렌더링합니다.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -287,21 +294,24 @@ export function OfficeConversationPanel({
           <ThreadHeader
             mode={mode}
             issue={selectedThreadIssue}
+            meetingRoom={threadMeetingRoom}
             agentById={agentById}
             selectedProject={selectedThreadProject}
             selectedConversationReasonLabel={selectedConversationReasonLabel}
           />
 
           <ThreadTimeline
-            companyId={companyId}
             issue={selectedThreadIssue}
             entries={threadEntries}
             commentsLoading={threadCommentsLoading}
             commentsError={threadCommentsError}
+            meetingRoom={threadMeetingRoom}
+            meetingRoomLoading={threadMeetingRoomLoading}
+            meetingRoomError={threadMeetingRoomError}
             agentById={agentById}
           />
 
-          {selectedThreadIssue ? (
+          {selectedThreadIssue && selectedThreadIssue.meetingMode !== "orchestrated" ? (
             <LiveRunWidget issueId={selectedThreadIssue.id} companyId={companyId} />
           ) : null}
 
@@ -370,7 +380,7 @@ function ConversationSelectionCard({
           <div>
             <div className="text-sm font-semibold text-foreground">전체회의 준비</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              진행자 1명은 실제 assignee로 유지하고, 나머지는 멘션 참가자로 회의 이슈에 포함합니다.
+              진행자와 참가자를 고르면 orchestrated 회의실을 만들고, 각 참가자는 내부 child issue로 라운드 응답을 진행합니다.
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-card px-3 py-3 text-sm text-foreground">
@@ -457,7 +467,7 @@ function ThreadList({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {mode === "meeting"
-            ? "회의 형식 규약이 들어간 이슈를 채팅형으로 엽니다."
+            ? "orchestrated 회의실과 기존 legacy meeting thread를 함께 엽니다."
             : "서로 다른 이슈의 댓글을 합치지 않고, 각 이슈를 독립된 대화로 취급합니다."}
         </p>
       </div>
@@ -512,12 +522,14 @@ function ThreadList({
 function ThreadHeader({
   mode,
   issue,
+  meetingRoom,
   agentById,
   selectedProject,
   selectedConversationReasonLabel,
 }: {
   mode: OfficeConversationMode;
   issue: Issue | null;
+  meetingRoom: MeetingRoomDTO | null;
   agentById: Map<string, Agent>;
   selectedProject: Project | null;
   selectedConversationReasonLabel: string | null;
@@ -530,17 +542,23 @@ function ThreadHeader({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {mode === "meeting"
-            ? "진행자와 참가자를 정한 뒤 새 회의 이슈를 만들면 여기서 그룹 채팅처럼 이어집니다."
+            ? "진행자와 참가자를 정한 뒤 새 회의를 만들면 여기서 라운드 기반 회의실로 이어집니다."
             : "새 이슈를 만들면 이후 댓글이 채팅처럼 이어지고, 자세한 작업 화면은 이슈 상세에서 볼 수 있습니다."}
         </p>
       </div>
     );
   }
 
-  const facilitatorName = issue.assigneeAgentId ? agentById.get(issue.assigneeAgentId)?.name ?? issue.assigneeAgentId : null;
-  const participantNames = extractOfficeMeetingParticipantIds(issue)
-    .map((agentId) => agentById.get(agentId)?.name ?? null)
-    .filter((name): name is string => Boolean(name));
+  const facilitatorAgentId = meetingRoom?.participants.find((participant) => participant.isFacilitator)?.agentId ?? issue.assigneeAgentId;
+  const facilitatorName = facilitatorAgentId ? agentById.get(facilitatorAgentId)?.name ?? facilitatorAgentId : null;
+  const participantNames = meetingRoom
+    ? meetingRoom.participants
+      .filter((participant) => !participant.isFacilitator)
+      .map((participant) => agentById.get(participant.agentId)?.name ?? null)
+      .filter((name): name is string => Boolean(name))
+    : extractOfficeMeetingParticipantIds(issue)
+      .map((agentId) => agentById.get(agentId)?.name ?? null)
+      .filter((name): name is string => Boolean(name));
 
   return (
     <div className="rounded-[24px] border border-border bg-background/70 px-4 py-4">
@@ -584,14 +602,15 @@ function ThreadHeader({
 }
 
 function ThreadTimeline({
-  companyId,
   issue,
   entries,
   commentsLoading,
   commentsError,
+  meetingRoom,
+  meetingRoomLoading,
+  meetingRoomError,
   agentById,
 }: {
-  companyId: string;
   issue: Issue | null;
   entries: Array<{
     id: string;
@@ -604,9 +623,49 @@ function ThreadTimeline({
   }>;
   commentsLoading: boolean;
   commentsError: string | null;
+  meetingRoom: MeetingRoomDTO | null;
+  meetingRoomLoading: boolean;
+  meetingRoomError: string | null;
   agentById: Map<string, Agent>;
 }) {
   if (!issue) return null;
+
+  if (issue.meetingMode === "orchestrated") {
+    if (meetingRoomLoading) {
+      return (
+        <div className="rounded-[24px] border border-border bg-background/70">
+          <div className="border-b border-border px-4 py-3">
+            <div className="text-sm font-semibold text-foreground">회의실</div>
+          </div>
+          <div className="p-4 text-sm text-muted-foreground">회의실을 불러오는 중입니다...</div>
+        </div>
+      );
+    }
+
+    if (meetingRoomError) {
+      return (
+        <div className="rounded-[24px] border border-border bg-background/70">
+          <div className="border-b border-border px-4 py-3">
+            <div className="text-sm font-semibold text-foreground">회의실</div>
+          </div>
+          <div className="p-4 text-sm text-destructive">{meetingRoomError}</div>
+        </div>
+      );
+    }
+
+    if (!meetingRoom) {
+      return (
+        <div className="rounded-[24px] border border-border bg-background/70">
+          <div className="border-b border-border px-4 py-3">
+            <div className="text-sm font-semibold text-foreground">회의실</div>
+          </div>
+          <div className="p-4 text-sm text-muted-foreground">표시할 회의실 정보가 없습니다.</div>
+        </div>
+      );
+    }
+
+    return <MeetingRoomPanel issue={issue} room={meetingRoom} agentById={agentById} compact />;
+  }
 
   return (
     <div className="rounded-[24px] border border-border bg-background/70">
@@ -905,11 +964,15 @@ function OfficeComposer({
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!canCommentCurrentThread || isSending} onClick={onCommentCurrentThread}>
             <MessageSquare className="mr-1 h-3.5 w-3.5" />
-            {mode === "meeting" ? "현재 회의에 코멘트" : "현재 작업에 코멘트"}
+            {mode === "meeting"
+              ? selectedThreadIssue?.meetingMode === "orchestrated"
+                ? "회의 제어는 위 패널에서"
+                : "현재 회의에 코멘트"
+              : "현재 작업에 코멘트"}
           </Button>
           <Button size="sm" variant="outline" disabled={!canCreateIssue || isSending} onClick={onCreateIssue}>
             <Send className="mr-1 h-3.5 w-3.5" />
-            {mode === "meeting" ? "새 회의 이슈 만들기" : "새 이슈로 보내기"}
+            {mode === "meeting" ? "새 회의 만들기" : "새 이슈로 보내기"}
           </Button>
           {isSending ? (
             <span className="inline-flex items-center rounded-full bg-muted px-3 py-2 text-xs text-muted-foreground">

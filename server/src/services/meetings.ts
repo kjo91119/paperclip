@@ -561,6 +561,34 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
     if (!rootIssue) return null;
     const currentRound = rounds.find((round) => round.roundNumber === meeting.currentRoundNumber) ?? null;
+    const currentRoundParticipants = currentRound
+      ? await db
+        .select({
+          id: issueMeetingRoundParticipants.id,
+          participantId: issueMeetingRoundParticipants.participantId,
+          agentId: issueMeetingRoundParticipants.agentId,
+          childIssueId: issueMeetingRoundParticipants.childIssueId,
+          speakingOrder: issueMeetingParticipants.speakingOrder,
+          status: issueMeetingRoundParticipants.status,
+          remindedCount: issueMeetingRoundParticipants.remindedCount,
+          deadlineAt: issueMeetingRoundParticipants.deadlineAt,
+          respondedAt: issueMeetingRoundParticipants.respondedAt,
+          skipReason: issueMeetingRoundParticipants.skipReason,
+          failureReason: issueMeetingRoundParticipants.failureReason,
+          lastErrorCode: issueMeetingRoundParticipants.lastErrorCode,
+        })
+        .from(issueMeetingRoundParticipants)
+        .innerJoin(issueMeetingParticipants, eq(issueMeetingRoundParticipants.participantId, issueMeetingParticipants.id))
+        .where(
+          and(
+            eq(issueMeetingRoundParticipants.roundId, currentRound.id),
+            currentRound.kind === "summary" && meeting.summaryAgentId
+              ? eq(issueMeetingRoundParticipants.agentId, meeting.summaryAgentId)
+              : sql`true`,
+          ),
+        )
+        .orderBy(asc(issueMeetingParticipants.speakingOrder), asc(issueMeetingRoundParticipants.createdAt))
+      : [];
     const transcript = await buildMeetingTranscript({
       meeting,
       rootIssueId: rootIssue.id,
@@ -621,6 +649,20 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         status: round.status as MeetingRoomDTO["rounds"][number]["status"],
         deadlineAt: round.deadlineAt,
         completedAt: round.completedAt,
+      })),
+      currentRoundParticipants: currentRoundParticipants.map((participant) => ({
+        id: participant.id,
+        participantId: participant.participantId,
+        agentId: participant.agentId,
+        childIssueId: participant.childIssueId,
+        speakingOrder: participant.speakingOrder,
+        status: participant.status as MeetingRoomDTO["currentRoundParticipants"][number]["status"],
+        remindedCount: participant.remindedCount,
+        deadlineAt: participant.deadlineAt,
+        respondedAt: participant.respondedAt,
+        skipReason: participant.skipReason,
+        failureReason: participant.failureReason,
+        lastErrorCode: participant.lastErrorCode,
       })),
       transcript,
     };

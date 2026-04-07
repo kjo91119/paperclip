@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import { buildAgentMentionHref, type Agent, type Project } from "@paperclipai/shared";
+import type { Agent, Project } from "@paperclipai/shared";
 import {
   Bot,
   CircleDot,
@@ -15,6 +15,7 @@ import { agentsApi } from "../api/agents";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
+import { meetingsApi } from "../api/meetings";
 import { projectsApi } from "../api/projects";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -164,33 +165,6 @@ function buildOfficeMessageBody(input: {
   const contextLines = buildOfficeContextLines(input);
   if (contextLines.length === 0) return main;
   return `${main}\n\n컨텍스트\n${contextLines.join("\n")}`;
-}
-
-function buildAgentMention(agent: Agent): string {
-  return `[@${agent.name}](${buildAgentMentionHref(agent.id, agent.icon ?? null)})`;
-}
-
-function buildOfficeMeetingBody(input: {
-  body: string;
-  referencePath: string;
-  project: Project | null;
-  facilitator: Agent | null;
-  participants: Agent[];
-}) {
-  const main = input.body.trim();
-  const allParticipants = input.facilitator
-    ? [input.facilitator, ...input.participants.filter((agent) => agent.id !== input.facilitator?.id)]
-    : input.participants;
-  const contextLines = [
-    "- 회의 형식: 전체회의",
-    input.facilitator ? `- 진행자: ${buildAgentMention(input.facilitator)}` : null,
-    allParticipants.length > 0
-      ? `- 참가자: ${allParticipants.map((agent) => buildAgentMention(agent)).join(" ")}`
-      : null,
-    ...buildOfficeContextLines(input),
-  ].filter((line): line is string => Boolean(line));
-
-  return `${main}\n\n회의 컨텍스트\n${contextLines.join("\n")}`;
 }
 
 function formatConversationTargetReason(reason: OfficeConversationTargetReason | null, hasLiveRun: boolean) {
@@ -572,7 +546,14 @@ export function OfficeView() {
   const threadCommentsQuery = useQuery({
     queryKey: queryKeys.issues.comments(selectedThreadIssueIdForQuery),
     queryFn: () => issuesApi.listComments(selectedThreadIssueIdForQuery),
-    enabled: Boolean(selectedThreadIssueIdForQuery),
+    enabled: Boolean(selectedThreadIssueIdForQuery) && resolvedThreadIssue?.meetingMode !== "orchestrated",
+  });
+
+  const meetingRoomQuery = useQuery({
+    queryKey: queryKeys.meetings.byIssue(selectedThreadIssueIdForQuery),
+    queryFn: () => meetingsApi.getByIssue(selectedThreadIssueIdForQuery),
+    enabled: Boolean(selectedThreadIssueIdForQuery) && resolvedThreadIssue?.meetingMode === "orchestrated",
+    refetchInterval: resolvedThreadIssue?.meetingMode === "orchestrated" ? 5000 : false,
   });
 
   useEffect(() => {
@@ -643,7 +624,7 @@ export function OfficeView() {
     if (!selectedCompanyId || gateState !== "ready") return;
     const nextPath = createOfficeConversationPath({
       mode: composerMode,
-      agentId: selectedAgentId || null,
+      agentId: composerMode === "direct" ? selectedAgentId || null : null,
       issueId: resolvedThreadIssue?.id ?? null,
       projectId: selectedProjectId || null,
     });
@@ -696,7 +677,7 @@ export function OfficeView() {
       });
   };
 
-  const invalidateOfficeData = async (issueId?: string) => {
+  const invalidateOfficeData = async (issueId?: string, meetingId?: string) => {
     if (!selectedCompanyId) return;
     invalidateOfficeLists(queryClient, selectedCompanyId);
     if (issueId) {
@@ -706,7 +687,11 @@ export function OfficeView() {
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.activeRun(issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.meetings.byIssue(issueId) }),
       ]);
+    }
+    if (meetingId) {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.meetings.detail(meetingId) });
     }
   };
 
@@ -719,19 +704,26 @@ export function OfficeView() {
         throw new Error("전체회의는 진행자를 포함해 두 명 이상을 선택해야 합니다.");
       }
 
-      const description = composerMode === "meeting"
-        ? buildOfficeMeetingBody({
-            body: messageBody,
-            referencePath: effectiveReferencePath,
-            project: selectedProject,
-            facilitator: selectedAgentState?.agent ?? null,
-            participants: selectedMeetingParticipants,
-          })
-        : buildOfficeMessageBody({
-            body: messageBody,
-            referencePath: effectiveReferencePath,
-            project: selectedProject,
-          });
+      if (composerMode === "meeting") {
+        return meetingsApi.create(selectedCompanyId, {
+          agenda: messageBody.trim(),
+          participantAgentIds: meetingParticipants.map((agent) => agent.id),
+          facilitatorAgentId: selectedAgentId,
+          summaryAgentId: selectedAgentId,
+          maxDiscussionRounds: 1,
+          responseTimeoutSec: 900,
+          ...(selectedProject ? { projectId: selectedProject.id } : {}),
+          ...(effectiveReferencePath ? { referencePath: effectiveReferencePath } : {}),
+          autoStart: true,
+          autoContinue: false,
+        });
+      }
+
+      const description = buildOfficeMessageBody({
+        body: messageBody,
+        referencePath: effectiveReferencePath,
+        project: selectedProject,
+      });
 
       return issuesApi.create(selectedCompanyId, {
         title: resolvedMessageTitle,
@@ -742,16 +734,19 @@ export function OfficeView() {
         priority: "high",
       });
     },
-    onSuccess: async (issue) => {
-      await invalidateOfficeData(issue.id);
-      setLastTouchedIssueId(issue.id);
-      setSelectedThreadIssueId(issue.id);
+    onSuccess: async (created) => {
+      const rootIssueId = "rootIssue" in created ? created.rootIssue.id : created.id;
+      const meetingId = "rootIssue" in created ? created.meeting.id : undefined;
+      const title = "rootIssue" in created ? created.rootIssue.title : created.title;
+      await invalidateOfficeData(rootIssueId, meetingId);
+      setLastTouchedIssueId(rootIssueId);
+      setSelectedThreadIssueId(rootIssueId);
       clearComposer();
       pushToast({
         title: composerMode === "meeting" ? "전체회의 이슈를 만들었습니다" : "새 대화 이슈를 만들었습니다",
-        body: `${issue.identifier ?? issue.id.slice(0, 8)} ${issue.title}`,
+        body: `${rootIssueId.slice(0, 8)} ${title}`,
         tone: "success",
-        action: { label: "이슈 열기", href: issueUrl(issue) },
+        action: { label: "이슈 열기", href: issueUrl({ id: rootIssueId }) },
       });
     },
     onError: (mutationError) => {
@@ -766,6 +761,9 @@ export function OfficeView() {
   const commentOnSelectedIssue = useMutation({
     mutationFn: async () => {
       if (!resolvedThreadIssue) throw new Error("코멘트를 남길 스레드를 먼저 선택하세요.");
+      if (resolvedThreadIssue.meetingMode === "orchestrated") {
+        throw new Error("orchestrated 회의는 댓글 대신 회의 제어 버튼으로 진행해주세요.");
+      }
       if (!messageBody.trim()) throw new Error("보낼 내용을 입력하세요.");
       const body = buildOfficeMessageBody({
         body: messageBody,
@@ -902,7 +900,7 @@ export function OfficeView() {
             </h1>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
               2D 오피스와 AI 회사 메신저를 한 화면에 묶어, 에이전트 상태와 대화를 함께 운영하는 실시간 작업실입니다.
-              DM과 전체회의는 여전히 이슈/댓글 모델 위에서 작동합니다.
+              DM은 이슈/댓글 스레드로, 전체회의는 orchestrated meeting room으로 이어집니다.
             </p>
           </div>
         </div>
@@ -1029,6 +1027,9 @@ export function OfficeView() {
             threadComments={threadCommentsQuery.data ?? []}
             threadCommentsLoading={threadCommentsQuery.isLoading}
             threadCommentsError={threadCommentsQuery.error instanceof Error ? threadCommentsQuery.error.message : null}
+            threadMeetingRoom={meetingRoomQuery.data ?? null}
+            threadMeetingRoomLoading={meetingRoomQuery.isLoading}
+            threadMeetingRoomError={meetingRoomQuery.error instanceof Error ? meetingRoomQuery.error.message : null}
             selectedProject={selectedProject}
             selectedProjectId={selectedProjectId}
             projects={projects}
@@ -1083,7 +1084,11 @@ export function OfficeView() {
             sendSummary={sendSummary}
             onCommentCurrentThread={() => commentOnSelectedIssue.mutate()}
             onCreateIssue={() => createIssueFromOffice.mutate()}
-            canCommentCurrentThread={Boolean(resolvedThreadIssue && messageBody.trim())}
+            canCommentCurrentThread={Boolean(
+              resolvedThreadIssue
+              && resolvedThreadIssue.meetingMode !== "orchestrated"
+              && messageBody.trim(),
+            )}
             canCreateIssue={
               Boolean(
                 selectedAgentId &&

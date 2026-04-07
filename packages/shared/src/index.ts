@@ -245,6 +245,7 @@ export type {
   MeetingSummary,
   MeetingParticipantSummary,
   MeetingRoundSummary,
+  MeetingCurrentRoundParticipantSummary,
   MeetingTranscriptEntry,
   MeetingRoomIssueSummary,
   MeetingRoomDTO,

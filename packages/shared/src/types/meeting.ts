@@ -1,6 +1,7 @@
 import type {
   IssueMeetingMode,
   IssueMeetingRoundKind,
+  IssueMeetingRoundParticipantStatus,
   IssueMeetingRoundStatus,
   IssueMeetingStatus,
   IssueSystemCommentKind,
@@ -61,6 +62,21 @@ export interface MeetingRoundSummary {
   completedAt: Date | null;
 }
 
+export interface MeetingCurrentRoundParticipantSummary {
+  id: string;
+  participantId: string;
+  agentId: string;
+  childIssueId: string;
+  speakingOrder: number;
+  status: IssueMeetingRoundParticipantStatus;
+  remindedCount: number;
+  deadlineAt: Date | null;
+  respondedAt: Date | null;
+  skipReason: string | null;
+  failureReason: string | null;
+  lastErrorCode: string | null;
+}
+
 export interface MeetingTranscriptEntry {
   entryKind: MeetingTranscriptEntryKind;
   roundNumber: number | null;
@@ -91,5 +107,6 @@ export interface MeetingRoomDTO {
   rootIssue: MeetingRoomIssueSummary;
   participants: MeetingParticipantSummary[];
   rounds: MeetingRoundSummary[];
+  currentRoundParticipants: MeetingCurrentRoundParticipantSummary[];
   transcript: MeetingTranscriptEntry[];
 }

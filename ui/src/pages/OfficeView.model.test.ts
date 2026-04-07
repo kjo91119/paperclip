@@ -350,7 +350,7 @@ describe("office conversation lists", () => {
     expect(issues.map((issue) => issue.id)).toEqual(["issue-one", "issue-two"]);
   });
 
-  it("recognizes and lists meeting issues by the embedded meeting format marker", () => {
+  it("recognizes and lists orchestrated meeting issues by meetingMode", () => {
     const issues = listOfficeMeetingIssues([
       createIssue({
         id: "issue-direct",
@@ -359,13 +359,22 @@ describe("office conversation lists", () => {
       }),
       createIssue({
         id: "issue-meeting",
-        description: "회의 컨텍스트\n- 회의 형식: 전체회의\n- 진행자: CEO",
+        meetingMode: "orchestrated",
+        description: "회의 컨텍스트",
         updatedAt: new Date("2026-04-03T00:02:00.000Z"),
       }),
     ]);
 
     expect(isOfficeMeetingIssue(issues[0]!)).toBe(true);
     expect(issues.map((issue) => issue.id)).toEqual(["issue-meeting"]);
+  });
+
+  it("keeps the description marker fallback for legacy meeting threads", () => {
+    const issue = createIssue({
+      description: "회의 컨텍스트\n- 회의 형식: 전체회의\n- 진행자: CEO",
+    });
+
+    expect(isOfficeMeetingIssue(issue)).toBe(true);
   });
 
   it("extracts meeting participant ids without duplicating the facilitator", () => {
