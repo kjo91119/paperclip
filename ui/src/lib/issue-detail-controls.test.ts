@@ -23,4 +23,17 @@ describe("issue detail control guards", () => {
     expect(shouldShowIssueDetailEditableStatus(issue)).toBe(true);
     expect(shouldShowIssueDetailHideAction(issue)).toBe(true);
   });
+
+  it("keeps generic controls available when meeting mode is absent", () => {
+    const nullModeIssue = { meetingMode: null };
+    const undefinedModeIssue = { meetingMode: undefined };
+
+    expect(isIssueDetailReadOnly(nullModeIssue)).toBe(false);
+    expect(shouldShowIssueDetailEditableStatus(nullModeIssue)).toBe(true);
+    expect(shouldShowIssueDetailHideAction(nullModeIssue)).toBe(true);
+
+    expect(isIssueDetailReadOnly(undefinedModeIssue)).toBe(false);
+    expect(shouldShowIssueDetailEditableStatus(undefinedModeIssue)).toBe(true);
+    expect(shouldShowIssueDetailHideAction(undefinedModeIssue)).toBe(true);
+  });
 });
