@@ -1,6 +1,6 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
-import { createMeetingSchema } from "@paperclipai/shared";
+import { createMeetingSchema, requestMeetingSummarySchema } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { accessService, issueService, meetingService } from "../services/index.js";
 import { forbidden } from "../errors.js";
@@ -155,9 +155,19 @@ export function meetingRoutes(db: Db) {
     res.json(dto);
   });
 
+  router.post("/issues/:issueId/meeting/summary", validate(requestMeetingSummarySchema), async (req, res) => {
+    const loaded = await loadControlledIssue(req);
+    if (!loaded) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const dto = await meetings.summaryMeetingByIssueId(loaded.normalizedIssueId, req.body, actor);
+    res.json(dto);
+  });
+
   const phaseBSkeletonHandlers = [
     "/issues/:issueId/meeting/cancel",
-    "/issues/:issueId/meeting/summary",
   ] as const;
 
   for (const path of phaseBSkeletonHandlers) {

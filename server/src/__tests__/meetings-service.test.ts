@@ -926,4 +926,666 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     });
     expect(resumed?.meeting.status).toBe("awaiting_operator");
   });
+
+  it("opens a summary round and records summary_requested_by_user_id", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "최종 요약 라운드 진입 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: "/docs/meeting.md",
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const comments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO 의견입니다.",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO 의견입니다.",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: comments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: comments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    dispatchCalls = [];
+    const summarized = await svc.summaryMeetingByIssueId(created!.rootIssue.id, {}, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    expect(summarized?.meeting.status).toBe("running");
+    expect(summarized?.meeting.currentRoundNumber).toBe(2);
+    expect(summarized?.meeting.currentRoundKind).toBe("summary");
+    expect(dispatchCalls).toHaveLength(1);
+    expect(dispatchCalls[0]?.agentId).toBe(ceoId);
+
+    const summaryRound = await db
+      .select()
+      .from(issueMeetingRounds)
+      .where(and(eq(issueMeetingRounds.meetingId, created!.meeting.id), eq(issueMeetingRounds.kind, "summary")))
+      .then((rows) => rows[0] ?? null);
+
+    expect(summaryRound?.summaryRequestedByUserId).toBe("board-user");
+    expect(summaryRound?.status).toBe("collecting");
+
+    const latestPrompt = await db
+      .select({ body: issueComments.body })
+      .from(issueComments)
+      .where(eq(issueComments.issueId, participants[0]!.childIssueId))
+      .orderBy(issueComments.createdAt)
+      .then((rows) => rows.at(-1)?.body ?? "");
+    expect(latestPrompt).toContain("전체회의 최종 요약 요청");
+    expect(latestPrompt).toContain("이전 라운드 요약:");
+  });
+
+  it("uses continue to transition from the last discussion round into summary", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "continue -> summary 전이 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const openingComments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO opening 의견",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO opening 의견",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: openingComments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: openingComments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    await svc.continueMeetingByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const discussionComments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO discussion 의견",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO discussion 의견",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: discussionComments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: discussionComments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    dispatchCalls = [];
+    const summarized = await svc.continueMeetingByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    expect(summarized?.meeting.currentRoundKind).toBe("summary");
+    expect(dispatchCalls).toHaveLength(1);
+
+    const summaryRound = await db
+      .select()
+      .from(issueMeetingRounds)
+      .where(and(eq(issueMeetingRounds.meetingId, created!.meeting.id), eq(issueMeetingRounds.kind, "summary")))
+      .then((rows) => rows[0] ?? null);
+    expect(summaryRound?.summaryRequestedByUserId).toBe("board-user");
+  });
+
+  it("completes the meeting when the summarizer responds", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "최종 요약 완료 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const comments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO 의견입니다.",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO 의견입니다.",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: comments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: comments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, {}, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const finalComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: participants[0]!.childIssueId,
+      authorKind: "agent",
+      authorAgentId: participants[0]!.agentId,
+      authorUserId: null,
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "권장 결론: 신뢰 페이지와 정책 페이지를 먼저 보강합니다.\n실행안: 1) 회사 소개 2) 연락처 3) 광고정책 카테고리 정리",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: participants[0]!.childIssueId,
+      comment: {
+        id: finalComment.id,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+      },
+      actor: {
+        actorType: "agent",
+        actorId: participants[0]!.agentId,
+        agentId: participants[0]!.agentId,
+        runId: null,
+      },
+    });
+
+    const meeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, created!.meeting.id))
+      .then((rows) => rows[0] ?? null);
+    expect(meeting?.status).toBe("completed");
+    expect(meeting?.completedAt).not.toBeNull();
+
+    const rootIssue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, created!.rootIssue.id))
+      .then((rows) => rows[0] ?? null);
+    expect(rootIssue?.status).toBe("done");
+
+    const rootComments = await db
+      .select({ systemCommentKind: issueComments.systemCommentKind })
+      .from(issueComments)
+      .where(eq(issueComments.issueId, created!.rootIssue.id));
+    expect(rootComments.filter((comment) => comment.systemCommentKind === "meeting_completed")).toHaveLength(1);
+
+    const dto = await svc.getById(created!.meeting.id);
+    expect(dto?.transcript.some((entry) => entry.entryKind === "final_summary" && entry.body.includes("권장 결론"))).toBe(true);
+    expect(dto?.transcript.at(-1)?.entryKind).toBe("meeting_completed");
+
+    const completionActivity = await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(and(eq(activityLog.entityId, created!.meeting.id), eq(activityLog.action, "meeting.completed")));
+    expect(completionActivity).toHaveLength(1);
+  });
+
+  it("marks final status as partial_completed after skipped participants", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "partial completed 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const ceoComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: participants[0]!.childIssueId,
+      authorKind: "agent",
+      authorAgentId: participants[0]!.agentId,
+      authorUserId: null,
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "CEO만 먼저 답합니다.",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: participants[0]!.childIssueId,
+      comment: {
+        id: ceoComment.id,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+      },
+      actor: {
+        actorType: "agent",
+        actorId: participants[0]!.agentId,
+        agentId: participants[0]!.agentId,
+        runId: null,
+      },
+    });
+
+    await svc.skipParticipantByIssueId(created!.rootIssue.id, ctoId, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, {}, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const finalComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: participants[0]!.childIssueId,
+      authorKind: "agent",
+      authorAgentId: participants[0]!.agentId,
+      authorUserId: null,
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "권장 결론: 현 단계에서는 CEO 의견 기준으로 진행합니다.",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: participants[0]!.childIssueId,
+      comment: {
+        id: finalComment.id,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+      },
+      actor: {
+        actorType: "agent",
+        actorId: participants[0]!.agentId,
+        agentId: participants[0]!.agentId,
+        runId: null,
+      },
+    });
+
+    const meeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, created!.meeting.id))
+      .then((rows) => rows[0] ?? null);
+    expect(meeting?.status).toBe("partial_completed");
+
+    const partialActivity = await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(and(eq(activityLog.entityId, created!.meeting.id), eq(activityLog.action, "meeting.partial_completed")));
+    expect(partialActivity).toHaveLength(1);
+  });
+
+  it("reassigns the summary round across participants without duplicating history rows", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "요약자 재할당 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 60,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const comments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO 의견입니다.",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO 의견입니다.",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: comments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: comments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, { summaryAgentId: ceoId }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    currentNow = new Date("2026-04-07T00:05:00.000Z");
+    await svc.refreshMeetingState(created!.meeting.id);
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, { summaryAgentId: ctoId }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    currentNow = new Date("2026-04-07T00:10:00.000Z");
+    await svc.refreshMeetingState(created!.meeting.id);
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, { summaryAgentId: ceoId }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const summaryRound = await db
+      .select()
+      .from(issueMeetingRounds)
+      .where(and(eq(issueMeetingRounds.meetingId, created!.meeting.id), eq(issueMeetingRounds.kind, "summary")))
+      .then((rows) => rows[0] ?? null);
+
+    const summaryRows = await db
+      .select({
+        agentId: issueMeetingRoundParticipants.agentId,
+        status: issueMeetingRoundParticipants.status,
+      })
+      .from(issueMeetingRoundParticipants)
+      .where(eq(issueMeetingRoundParticipants.roundId, summaryRound!.id));
+
+    expect(summaryRows).toHaveLength(2);
+    expect(summaryRows.filter((row) => row.agentId === ceoId)).toHaveLength(1);
+    expect(summaryRows.filter((row) => row.agentId === ctoId)).toHaveLength(1);
+    expect(summaryRows.find((row) => row.agentId === ceoId)?.status).toBe("queued");
+    expect(summaryRows.find((row) => row.agentId === ctoId)?.status).toBe("timed_out");
+  });
 });

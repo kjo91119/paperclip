@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agentWakeupRequests,
@@ -15,6 +15,7 @@ import type {
   IssueMeetingRoundParticipantStatus,
   IssueMeetingStatus,
   MeetingRoomDTO,
+  RequestMeetingSummary,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -267,6 +268,49 @@ function discussionPromptBody(input: {
   return lines.join("\n");
 }
 
+function finalSummaryPromptBody(input: {
+  agenda: string;
+  referencePath: string | null;
+  facilitatorName: string | null;
+  summaryBodies: string[];
+}) {
+  const lines = [
+    "전체회의 최종 요약 요청",
+    "",
+    "지금까지의 라운드 요약을 바탕으로 최종 결론을 정리해 주세요.",
+    "전체 transcript를 다시 길게 반복하지 말고, 실행 가능한 결론과 남은 리스크를 분리해 주세요.",
+    "",
+    "안건:",
+    input.agenda.trim(),
+  ];
+
+  if (input.referencePath) {
+    lines.push("", "참고 경로:", input.referencePath);
+  }
+
+  if (input.facilitatorName) {
+    lines.push("", `진행자: ${input.facilitatorName}`);
+  }
+
+  if (input.summaryBodies.length > 0) {
+    lines.push("", "이전 라운드 요약:");
+    for (const [index, body] of input.summaryBodies.entries()) {
+      lines.push("", `### 라운드 ${index + 1}`, body.trim());
+    }
+  }
+
+  lines.push(
+    "",
+    "답변 형식:",
+    "1. 권장 결론",
+    "2. 이유",
+    "3. 반대 의견 또는 남은 리스크",
+    "4. 바로 실행할 액션 3~5개",
+  );
+
+  return lines.join("\n");
+}
+
 function roundSummaryBody(input: {
   roundNumber: number;
   agenda: string;
@@ -288,6 +332,23 @@ function roundSummaryBody(input: {
   }
 
   return lines.join("\n");
+}
+
+function meetingCompletedBody(input: { status: "completed" | "partial_completed" }) {
+  if (input.status === "partial_completed") {
+    return [
+      "전체회의가 부분 완료 상태로 종료되었습니다.",
+      "",
+      "최종 요약은 준비되었지만, 일부 참가자 응답 누락 또는 재시도/예외 상황이 있었습니다.",
+      "최종 결론과 남은 리스크를 확인해 주세요.",
+    ].join("\n");
+  }
+
+  return [
+    "전체회의가 완료되었습니다.",
+    "",
+    "최종 요약과 실행안을 확인해 주세요.",
+  ].join("\n");
 }
 
 function operatorAttentionBody(input: {
@@ -417,6 +478,10 @@ function uniqueParticipantIds(ids: string[]) {
 
 function uniqueIds(ids: Array<string | null | undefined>) {
   return [...new Set(ids.filter((value): value is string => Boolean(value)))];
+}
+
+function requestedByUserId(actor: MeetingActor) {
+  return actor.actorType === "user" ? actor.actorId : null;
 }
 
 export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
@@ -749,7 +814,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         if (!responseComment) continue;
 
         transcript.push({
-          entryKind: "participant_response",
+          entryKind: round.kind === "summary" ? "final_summary" : "participant_response",
           roundNumber: round.roundNumber,
           roundKind: round.kind,
           participantAgentId: participant.agentId,
@@ -762,6 +827,10 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           respondedAt: participant.respondedAt,
           speakingOrder: participant.speakingOrder,
         });
+
+        if (round.kind === "summary") {
+          continue;
+        }
 
         const upperBoundMs = Math.min(
           nextRoundPromptTimes.get(`${participant.childIssueId}:${participant.agentId}`) ?? Number.POSITIVE_INFINITY,
@@ -900,6 +969,35 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     });
   }
 
+  async function deriveFinalMeetingStatus(meetingId: string): Promise<"completed" | "partial_completed"> {
+    const rows = await db
+      .select({
+        roundKind: issueMeetingRounds.kind,
+        status: issueMeetingRoundParticipants.status,
+      })
+      .from(issueMeetingRoundParticipants)
+      .innerJoin(issueMeetingRounds, eq(issueMeetingRoundParticipants.roundId, issueMeetingRounds.id))
+      .where(eq(issueMeetingRoundParticipants.meetingId, meetingId));
+
+    const hadPartialSignals = rows.some((row) =>
+      row.roundKind !== "summary" &&
+      ["timed_out", "blocked", "skipped", "failed", "late"].includes(row.status)
+    );
+
+    return hadPartialSignals ? "partial_completed" : "completed";
+  }
+
+  async function loadActiveParticipantChildIssueIds(
+    tx: Pick<Db, "select">,
+    meetingId: string,
+  ): Promise<string[]> {
+    return tx
+      .select({ childIssueId: issueMeetingParticipants.childIssueId })
+      .from(issueMeetingParticipants)
+      .where(and(eq(issueMeetingParticipants.meetingId, meetingId), eq(issueMeetingParticipants.status, "active")))
+      .then((rows) => rows.map((row) => row.childIssueId));
+  }
+
   async function loadParticipantRoster(meetingId: string) {
     return db
       .select({
@@ -1013,17 +1111,20 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       .select()
       .from(issueMeetingRoundParticipants)
       .where(eq(issueMeetingRoundParticipants.roundId, round.id));
-    const respondedCount = participantRows.filter((row) =>
+    const effectiveRows = round.kind === "summary"
+      ? participantRows.filter((row) => row.agentId === meeting.summaryAgentId)
+      : participantRows;
+    const respondedCount = effectiveRows.filter((row) =>
       RESPONDED_PARTICIPANT_STATUSES.has(row.status as IssueMeetingRoundParticipantStatus)
     ).length;
-    const total = participantRows.length;
+    const total = effectiveRows.length;
     const timeoutAt = now();
 
     await db.transaction(async (tx) => {
       const issueSvcTx = issueService(db);
 
-      const nonRespondedIds = participantRows
-        .filter((row) => !RESPONDED_PARTICIPANT_STATUSES.has(row.status as IssueMeetingRoundParticipantStatus))
+      const nonRespondedIds = effectiveRows
+        .filter((row) => ACTIVE_PARTICIPANT_STATUSES.has(row.status as IssueMeetingRoundParticipantStatus))
         .map((row) => row.id);
 
       if (nonRespondedIds.length > 0) {
@@ -1152,6 +1253,24 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           .then((rows) => rows[0]?.body ?? null)
         : null;
 
+      const priorRoundSummaryRows = round.kind === "summary"
+        ? await tx
+          .select({
+            roundNumber: issueMeetingRounds.roundNumber,
+            body: issueComments.body,
+          })
+          .from(issueMeetingRounds)
+          .innerJoin(issueComments, eq(issueMeetingRounds.roundSummaryCommentId, issueComments.id))
+          .where(
+            and(
+              eq(issueMeetingRounds.meetingId, meetingId),
+              inArray(issueMeetingRounds.kind, ["opening", "discussion", "followup"]),
+              isNotNull(issueMeetingRounds.roundSummaryCommentId),
+            ),
+          )
+          .orderBy(asc(issueMeetingRounds.roundNumber))
+        : [];
+
       const previousResponseRows = previousRound
         ? await tx
           .select({
@@ -1213,6 +1332,13 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
             facilitatorName,
             referencePath: meeting.referencePath,
           })
+          : round.kind === "summary"
+            ? finalSummaryPromptBody({
+              agenda: meeting.agenda,
+              referencePath: meeting.referencePath,
+              facilitatorName,
+              summaryBodies: priorRoundSummaryRows.map((summaryRow) => summaryRow.body),
+            })
           : discussionPromptBody({
             roundNumber: round.roundNumber,
             agenda: meeting.agenda,
@@ -1326,7 +1452,14 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         const participantCounts = await tx
           .select({ status: issueMeetingRoundParticipants.status })
           .from(issueMeetingRoundParticipants)
-          .where(eq(issueMeetingRoundParticipants.roundId, roundId));
+          .where(
+            and(
+              eq(issueMeetingRoundParticipants.roundId, roundId),
+              prepared.round.kind === "summary" && prepared.meeting.summaryAgentId
+                ? eq(issueMeetingRoundParticipants.agentId, prepared.meeting.summaryAgentId)
+                : sql`true`,
+            ),
+          );
         const respondedCount = participantCounts.filter((row) => row.status === "responded").length;
         const totalCount = participantCounts.length;
 
@@ -1502,6 +1635,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
     const completed = await db.transaction(async (tx) => {
       const issueSvcTx = issueService(db);
+      const activeChildIssueIds = await loadActiveParticipantChildIssueIds(tx, meeting.id);
       const [claimedRound] = await tx
         .update(issueMeetingRounds)
         .set({
@@ -1597,6 +1731,297 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     return true;
   }
 
+  async function openSummaryRound(
+    meeting: MeetingRow,
+    actor: MeetingActor,
+    input: {
+      summaryAgentId?: string | null;
+      reason: "explicit_summary" | "continue_to_summary";
+    },
+  ) {
+    const targetSummaryAgentId = input.summaryAgentId ?? meeting.summaryAgentId ?? meeting.facilitatorAgentId;
+    if (!targetSummaryAgentId) {
+      throw unprocessable("Summary agent is required to open a summary round");
+    }
+
+    const requestedBy = requestedByUserId(actor);
+    const activeParticipants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(and(eq(issueMeetingParticipants.meetingId, meeting.id), eq(issueMeetingParticipants.status, "active")))
+      .orderBy(asc(issueMeetingParticipants.speakingOrder), asc(issueMeetingParticipants.createdAt));
+    const participantByAgentId = new Map(activeParticipants.map((participant) => [participant.agentId, participant]));
+    const targetParticipant = participantByAgentId.get(targetSummaryAgentId);
+    if (!targetParticipant) {
+      throw unprocessable("summaryAgentId must reference an active meeting participant");
+    }
+
+    const existingSummaryRound = await db
+      .select()
+      .from(issueMeetingRounds)
+      .where(
+        and(
+          eq(issueMeetingRounds.meetingId, meeting.id),
+          eq(issueMeetingRounds.kind, "summary"),
+        ),
+      )
+      .orderBy(desc(issueMeetingRounds.roundNumber))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+
+    const prepared = await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+      const openedAt = now();
+      let summaryRound = existingSummaryRound;
+      let createdNewRound = false;
+
+      if (!summaryRound || summaryRound.status === "completed") {
+        const [insertedRound] = await tx
+          .insert(issueMeetingRounds)
+          .values({
+            companyId: meeting.companyId,
+            meetingId: meeting.id,
+            roundNumber: (meeting.currentRoundNumber ?? 0) + 1,
+            kind: "summary",
+            status: "dispatching",
+            summaryRequestedByUserId: requestedBy,
+            startedAt: openedAt,
+            deadlineAt: new Date(openedAt.getTime() + (meeting.responseTimeoutSec * 1000)),
+            createdAt: openedAt,
+            updatedAt: openedAt,
+          })
+          .returning();
+        summaryRound = insertedRound;
+        createdNewRound = true;
+
+        const roundOpenComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
+          body: roundOpenedBody({ roundNumber: insertedRound.roundNumber, agenda: meeting.agenda }),
+          systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+          systemCommentKind: "round_opened",
+        });
+
+        await tx
+          .update(issueMeetingRounds)
+          .set({
+            roundOpenRootCommentId: roundOpenComment.id,
+            updatedAt: openedAt,
+          })
+          .where(eq(issueMeetingRounds.id, insertedRound.id));
+      } else {
+        if (!["awaiting_operator", "timed_out", "failed"].includes(summaryRound.status)) {
+          throw unprocessable("Summary round is not ready for reassignment or retry");
+        }
+      }
+
+      const existingRows = await tx
+        .select()
+        .from(issueMeetingRoundParticipants)
+        .where(eq(issueMeetingRoundParticipants.roundId, summaryRound.id));
+
+      for (const row of existingRows) {
+        if (
+          row.agentId !== targetSummaryAgentId &&
+          ACTIVE_PARTICIPANT_STATUSES.has(row.status as IssueMeetingRoundParticipantStatus)
+        ) {
+          await tx
+            .update(issueMeetingRoundParticipants)
+            .set({
+              status: "skipped",
+              skipReason: "summary.reassigned",
+              skippedAt: openedAt,
+              updatedAt: openedAt,
+            })
+            .where(eq(issueMeetingRoundParticipants.id, row.id));
+        }
+      }
+
+      const targetExistingRow = existingRows.find((row) => row.participantId === targetParticipant.id) ?? null;
+      if (targetExistingRow) {
+        await tx
+          .update(issueMeetingRoundParticipants)
+          .set({
+            status: "pending_dispatch",
+            dispatchPromptCommentId: null,
+            dispatchWakeupRequestId: null,
+            dispatchWakeupStatus: null,
+            dispatchRunId: null,
+            responseCommentId: null,
+            responseRunId: null,
+            lateResponseCommentId: null,
+            failureReason: null,
+            lastErrorCode: null,
+            skipReason: null,
+            skippedAt: null,
+            respondedAt: null,
+            timedOutAt: null,
+            deadlineAt: new Date(openedAt.getTime() + (meeting.responseTimeoutSec * 1000)),
+            updatedAt: openedAt,
+          })
+          .where(eq(issueMeetingRoundParticipants.id, targetExistingRow.id));
+      } else {
+        await tx.insert(issueMeetingRoundParticipants).values({
+          companyId: meeting.companyId,
+          meetingId: meeting.id,
+          roundId: summaryRound.id,
+          participantId: targetParticipant.id,
+          agentId: targetParticipant.agentId,
+          childIssueId: targetParticipant.childIssueId,
+          status: "pending_dispatch",
+          deadlineAt: new Date(openedAt.getTime() + (meeting.responseTimeoutSec * 1000)),
+          createdAt: openedAt,
+          updatedAt: openedAt,
+        });
+      }
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "dispatching",
+          summaryRequestedByUserId: requestedBy,
+          startedAt: summaryRound.startedAt ?? openedAt,
+          deadlineAt: new Date(openedAt.getTime() + (meeting.responseTimeoutSec * 1000)),
+          updatedAt: openedAt,
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetingRounds.id, summaryRound.id));
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: "running",
+          summaryAgentId: targetSummaryAgentId,
+          currentRoundNumber: summaryRound.roundNumber,
+          updatedAt: openedAt,
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, meeting.id));
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: meeting.rootIssueId,
+        meetingStatus: "running",
+      });
+
+      return {
+        roundId: summaryRound.id,
+        roundNumber: summaryRound.roundNumber,
+        createdNewRound,
+        requestedBy,
+      };
+    });
+
+    await logMeetingActivity(actor, meeting.companyId, meeting.id, "meeting.summary_requested", {
+      roundId: prepared.roundId,
+      roundNumber: prepared.roundNumber,
+      requestedByUserId: prepared.requestedBy,
+      summaryAgentId: targetSummaryAgentId,
+      reason: input.reason,
+    });
+
+    if (prepared.createdNewRound) {
+      await logMeetingActivity(actor, meeting.companyId, meeting.id, "meeting.round_opened", {
+        roundId: prepared.roundId,
+        roundNumber: prepared.roundNumber,
+        roundKind: "summary",
+      });
+    }
+
+    await dispatchPendingParticipants(meeting.id, prepared.roundId, actor);
+    return getById(meeting.id);
+  }
+
+  async function completeSummaryRound(meeting: MeetingRow, round: MeetingRoundRow, actor: MeetingActor) {
+    const summaryParticipant = await db
+      .select({
+        participantId: issueMeetingRoundParticipants.participantId,
+        agentId: issueMeetingRoundParticipants.agentId,
+        childIssueId: issueMeetingRoundParticipants.childIssueId,
+        responseCommentId: issueMeetingRoundParticipants.responseCommentId,
+      })
+      .from(issueMeetingRoundParticipants)
+      .where(
+        and(
+          eq(issueMeetingRoundParticipants.roundId, round.id),
+          eq(issueMeetingRoundParticipants.status, "responded"),
+          isNotNull(issueMeetingRoundParticipants.responseCommentId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+
+    if (!summaryParticipant?.responseCommentId) {
+      return false;
+    }
+
+    const finalStatus = await deriveFinalMeetingStatus(meeting.id);
+
+    const completed = await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+      const activeChildIssueIds = await loadActiveParticipantChildIssueIds(tx, meeting.id);
+      const [claimedRound] = await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "completed",
+          completedAt: now(),
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(and(eq(issueMeetingRounds.id, round.id), ne(issueMeetingRounds.status, "completed")))
+        .returning({ id: issueMeetingRounds.id });
+      if (!claimedRound) {
+        return null;
+      }
+
+      const meetingCompletedComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
+        body: meetingCompletedBody({ status: finalStatus }),
+        systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+        systemCommentKind: "meeting_completed",
+      });
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: finalStatus,
+          completedAt: now(),
+          lastOperatorSignalCommentId: meetingCompletedComment.id,
+          lastRoundCompletedAt: now(),
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, meeting.id));
+
+      await tx
+        .update(issues)
+        .set({
+          status: "done",
+          updatedAt: now(),
+        })
+        .where(
+          inArray(
+            issues.id,
+            activeChildIssueIds,
+          ),
+        );
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: meeting.rootIssueId,
+        meetingStatus: finalStatus,
+      });
+
+      return { finalStatus, commentId: meetingCompletedComment.id };
+    });
+
+    if (!completed) return false;
+
+    await logMeetingActivity(actor, meeting.companyId, meeting.id, `meeting.${completed.finalStatus}`, {
+      roundId: round.id,
+      roundNumber: round.roundNumber,
+      summaryAgentId: summaryParticipant.agentId,
+      summaryCommentId: summaryParticipant.responseCommentId,
+    });
+
+    return true;
+  }
+
   async function maybeAdvanceRoundAfterResponse(meetingId: string, actor: MeetingActor) {
     const meeting = await db
       .select()
@@ -1615,6 +2040,14 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       .from(issueMeetingRoundParticipants)
       .where(eq(issueMeetingRoundParticipants.roundId, round.id));
     if (participantRows.length === 0) return;
+
+    if (round.kind === "summary") {
+      const currentSummaryRow = participantRows.find((row) => row.agentId === meeting.summaryAgentId) ?? null;
+      if (currentSummaryRow?.status === "responded") {
+        await completeSummaryRound(meeting, round, actor);
+      }
+      return;
+    }
 
     const respondedCount = participantRows.filter((row) => row.status === "responded").length;
     if (respondedCount === participantRows.length && !round.roundSummaryCommentId) {
@@ -2079,16 +2512,23 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       .where(eq(issueMeetingRounds.meetingId, freshMeeting.id))
       .then((rows) => rows.filter((row) => row.kind === "discussion" || row.kind === "followup").length);
 
-    let nextRoundKind: "discussion" | "followup";
+    let nextRoundKind: "discussion" | "followup" | "summary";
     if (currentRound.kind === "opening") {
       nextRoundKind = "discussion";
     } else if (currentRound.kind === "discussion" || currentRound.kind === "followup") {
       if (discussionRoundsUsed >= freshMeeting.maxDiscussionRounds) {
-        throw unprocessable("Discussion round budget is exhausted; final summary belongs to the next phase");
+        nextRoundKind = "summary";
+      } else {
+        nextRoundKind = "followup";
       }
-      nextRoundKind = "followup";
     } else {
       throw unprocessable("Continue is not supported for the current round kind");
+    }
+
+    if (nextRoundKind === "summary") {
+      return openSummaryRound(freshMeeting, actor, {
+        reason: "continue_to_summary",
+      });
     }
 
     const prepared = await db.transaction(async (tx) => {
@@ -2174,6 +2614,65 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
 
     await dispatchPendingParticipants(freshMeeting.id, prepared.id, actor);
     return getById(freshMeeting.id);
+  }
+
+  async function summaryMeetingByIssueId(
+    issueId: string,
+    input: RequestMeetingSummary,
+    actor: MeetingActor,
+  ) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+
+    await refreshMeetingState(meeting.id);
+    const freshMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, meeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!freshMeeting) throw notFound("Meeting not found");
+    if (!["running", "awaiting_operator"].includes(freshMeeting.status)) {
+      throw unprocessable("Meeting summary is only allowed while the meeting is active");
+    }
+
+    const currentRound = await getCurrentRound(freshMeeting.id, freshMeeting.currentRoundNumber);
+    if (!currentRound) throw notFound("Current meeting round not found");
+
+    if (currentRound.kind === "summary") {
+      return openSummaryRound(freshMeeting, actor, {
+        summaryAgentId: input.summaryAgentId ?? null,
+        reason: "explicit_summary",
+      });
+    }
+
+    if (!["collecting", "awaiting_operator", "timed_out", "completed"].includes(currentRound.status)) {
+      throw unprocessable("Summary request is only allowed when the current round has usable responses");
+    }
+
+    const roundParticipantRows = await db
+      .select({ status: issueMeetingRoundParticipants.status })
+      .from(issueMeetingRoundParticipants)
+      .where(eq(issueMeetingRoundParticipants.roundId, currentRound.id));
+    const respondedCount = roundParticipantRows.filter((row) => row.status === "responded").length;
+    if (respondedCount === 0) {
+      throw unprocessable("Cannot request summary without at least one participant response");
+    }
+
+    if (!currentRound.roundSummaryCommentId) {
+      await completeRoundWithSummary(freshMeeting, currentRound, actor);
+    }
+
+    const refreshedMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, freshMeeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!refreshedMeeting) throw notFound("Meeting not found");
+
+    return openSummaryRound(refreshedMeeting, actor, {
+      summaryAgentId: input.summaryAgentId ?? null,
+      reason: "explicit_summary",
+    });
   }
 
   async function onIssueCommentAdded(input: {
@@ -2286,6 +2785,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     remindParticipantByIssueId,
     resumeMeetingByIssueId,
     skipParticipantByIssueId,
+    summaryMeetingByIssueId,
     startMeetingById,
     startMeetingByIssueId,
     syncRootIssueStatusMirror,

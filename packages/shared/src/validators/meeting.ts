@@ -21,6 +21,12 @@ export const createMeetingSchema = z.object({
 
 export type CreateMeeting = z.infer<typeof createMeetingSchema>;
 
+export const requestMeetingSummarySchema = z.object({
+  summaryAgentId: z.string().uuid().nullable().optional(),
+}).default({});
+
+export type RequestMeetingSummary = z.infer<typeof requestMeetingSummarySchema>;
+
 export const meetingStatusSchema = z.enum(ISSUE_MEETING_STATUSES);
 export const meetingRoundKindSchema = z.enum(ISSUE_MEETING_ROUND_KINDS);
 export const meetingRoundStatusSchema = z.enum(ISSUE_MEETING_ROUND_STATUSES);

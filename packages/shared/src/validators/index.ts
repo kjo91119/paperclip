@@ -147,10 +147,12 @@ export {
 
 export {
   createMeetingSchema,
+  requestMeetingSummarySchema,
   meetingStatusSchema,
   meetingRoundKindSchema,
   meetingRoundStatusSchema,
   type CreateMeeting,
+  type RequestMeetingSummary,
 } from "./meeting.js";
 
 export {
