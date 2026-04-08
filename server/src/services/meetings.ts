@@ -85,6 +85,12 @@ type TranscriptRootSystemComment = {
   systemCommentKind: string | null;
 };
 
+type TranscriptRootUserComment = {
+  id: string;
+  body: string;
+  createdAt: Date;
+};
+
 type TranscriptRoundParticipantRow = {
   roundId: string;
   roundNumber: number;
@@ -179,6 +185,7 @@ function openingPromptBody(input: {
   participantNames: string[];
   facilitatorName: string | null;
   referencePath: string | null;
+  operatorComments: string[];
 }) {
   const lines = [
     "전체회의 라운드 1 응답 요청",
@@ -204,6 +211,8 @@ function openingPromptBody(input: {
     }
   }
 
+  appendOperatorCommentsSection(lines, input.operatorComments);
+
   lines.push(
     "",
     "답변 형식:",
@@ -223,6 +232,7 @@ function discussionPromptBody(input: {
   referencePath: string | null;
   priorRoundSummary: string | null;
   ownPreviousResponse: string | null;
+  operatorComments: string[];
 }) {
   const lines = [
     `전체회의 라운드 ${input.roundNumber} 토론 요청`,
@@ -257,6 +267,8 @@ function discussionPromptBody(input: {
     lines.push("", "당신의 이전 입장:", input.ownPreviousResponse.trim());
   }
 
+  appendOperatorCommentsSection(lines, input.operatorComments);
+
   lines.push(
     "",
     "답변 형식:",
@@ -273,6 +285,7 @@ function finalSummaryPromptBody(input: {
   referencePath: string | null;
   facilitatorName: string | null;
   summaryBodies: string[];
+  operatorComments: string[];
 }) {
   const lines = [
     "전체회의 최종 요약 요청",
@@ -299,6 +312,8 @@ function finalSummaryPromptBody(input: {
     }
   }
 
+  appendOperatorCommentsSection(lines, input.operatorComments);
+
   lines.push(
     "",
     "답변 형식:",
@@ -309,6 +324,47 @@ function finalSummaryPromptBody(input: {
   );
 
   return lines.join("\n");
+}
+
+function appendOperatorCommentsSection(lines: string[], operatorComments: string[]) {
+  if (operatorComments.length === 0) return;
+
+  lines.push("", "운영자 코멘트:");
+  for (const [index, comment] of operatorComments.entries()) {
+    lines.push("", `### 운영자 코멘트 ${index + 1}`, comment.trim());
+  }
+  lines.push("", "위 운영자 코멘트를 반영해 답변해 주세요.");
+}
+
+function operatorCommentsForRoundPrompt(input: {
+  meetingCreatedAt: Date;
+  roundKind: MeetingRoomDTO["rounds"][number]["kind"];
+  roundCreatedAt: Date;
+  roundStartedAt: Date | null;
+  previousRoundCreatedAt: Date | null;
+  previousRoundStartedAt: Date | null;
+  previousRoundCompletedAt: Date | null;
+  previousRoundSummaryCreatedAt: Date | null;
+  comments: Array<{ body: string; createdAt: Date }>;
+}) {
+  const lowerBoundMs = input.roundKind === "summary"
+    ? input.meetingCreatedAt.getTime()
+    : input.roundKind === "opening"
+      ? (input.roundStartedAt ?? input.roundCreatedAt).getTime()
+      : (
+        input.previousRoundSummaryCreatedAt ??
+        input.previousRoundCompletedAt ??
+        input.previousRoundStartedAt ??
+        input.previousRoundCreatedAt ??
+        input.meetingCreatedAt
+      ).getTime();
+
+  return input.comments
+    .filter((comment) => {
+      const createdAtMs = comment.createdAt.getTime();
+      return createdAtMs >= lowerBoundMs;
+    })
+    .map((comment) => comment.body);
 }
 
 function roundSummaryBody(input: {
@@ -676,7 +732,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
   }): Promise<MeetingRoomDTO["transcript"]> {
     if (input.rounds.length === 0) return [];
 
-    const [roundParticipantRows, rootSystemComments, childAgentComments] = await Promise.all([
+    const [roundParticipantRows, rootSystemComments, rootUserComments, childAgentComments] = await Promise.all([
       db
         .select({
           roundId: issueMeetingRoundParticipants.roundId,
@@ -717,6 +773,20 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           ),
         )
         .orderBy(asc(issueComments.createdAt)) as Promise<TranscriptRootSystemComment[]>,
+      db
+        .select({
+          id: issueComments.id,
+          body: issueComments.body,
+          createdAt: issueComments.createdAt,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.issueId, input.rootIssueId),
+            eq(issueComments.authorKind, "user"),
+          ),
+        )
+        .orderBy(asc(issueComments.createdAt)) as Promise<TranscriptRootUserComment[]>,
       input.participants.length === 0
         ? Promise.resolve([] as TranscriptAgentComment[])
         : db
@@ -808,8 +878,15 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         round.startedAt ??
         round.createdAt
       ).getTime();
+      const nextRoundOpenComment = nextRound?.roundOpenRootCommentId
+        ? rootCommentById.get(nextRound.roundOpenRootCommentId) ?? commentMetaById.get(nextRound.roundOpenRootCommentId)
+        : null;
       const nextRoundStartMs = nextRound
-        ? (nextRound.startedAt ?? nextRound.createdAt).getTime()
+        ? (
+          nextRoundOpenComment?.createdAt ??
+          nextRound.startedAt ??
+          nextRound.createdAt
+        ).getTime()
         : Number.POSITIVE_INFINITY;
       const operatorSignals = rootSystemComments.filter((comment) =>
         comment.systemCommentKind === "operator_attention" &&
@@ -931,6 +1008,30 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           systemCommentKind: "operator_attention",
           body: operatorSignal.body,
           createdAt: operatorSignal.createdAt,
+          respondedAt: null,
+          speakingOrder: null,
+        });
+      }
+
+      const operatorComments = rootUserComments.filter((comment) => {
+        const createdAtMs = comment.createdAt.getTime();
+        if (createdAtMs < roundStartMs || createdAtMs >= nextRoundStartMs) return false;
+        if (meetingIsTerminal && meetingTerminalAt && createdAtMs > meetingTerminalAt.getTime()) return false;
+        return true;
+      });
+
+      for (const operatorComment of operatorComments) {
+        transcript.push({
+          entryKind: "operator_comment",
+          roundNumber: round.roundNumber,
+          roundKind: round.kind,
+          participantAgentId: null,
+          sourceIssueId: input.rootIssueId,
+          sourceCommentId: operatorComment.id,
+          authorKind: "user",
+          systemCommentKind: null,
+          body: operatorComment.body,
+          createdAt: operatorComment.createdAt,
           respondedAt: null,
           speakingOrder: null,
         });
@@ -1287,13 +1388,14 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           .then((rows) => rows[0] ?? null)
         : null;
 
-      const previousRoundSummaryBody = previousRound?.roundSummaryCommentId
+      const previousRoundSummaryRow = previousRound?.roundSummaryCommentId
         ? await tx
-          .select({ body: issueComments.body })
+          .select({ body: issueComments.body, createdAt: issueComments.createdAt })
           .from(issueComments)
           .where(eq(issueComments.id, previousRound.roundSummaryCommentId))
-          .then((rows) => rows[0]?.body ?? null)
+          .then((rows) => rows[0] ?? null)
         : null;
+      const previousRoundSummaryBody = previousRoundSummaryRow?.body ?? null;
 
       const priorRoundSummaryRows = round.kind === "summary"
         ? await tx
@@ -1312,6 +1414,19 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           )
           .orderBy(asc(issueMeetingRounds.roundNumber))
         : [];
+      const rootUserComments = await tx
+        .select({
+          body: issueComments.body,
+          createdAt: issueComments.createdAt,
+        })
+        .from(issueComments)
+        .where(
+          and(
+            eq(issueComments.issueId, meeting.rootIssueId),
+            eq(issueComments.authorKind, "user"),
+          ),
+        )
+        .orderBy(asc(issueComments.createdAt));
 
       const previousResponseRows = previousRound
         ? await tx
@@ -1357,6 +1472,17 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       const participantNames = roster.map((row) => row.agentName);
       const facilitatorName = roster.find((row) => row.isFacilitator)?.agentName ?? null;
       const dispatchedAt = now();
+      const operatorCommentBodies = operatorCommentsForRoundPrompt({
+        meetingCreatedAt: meeting.createdAt,
+        roundKind: round.kind as MeetingRoomDTO["rounds"][number]["kind"],
+        roundCreatedAt: round.createdAt,
+        roundStartedAt: round.startedAt,
+        previousRoundCreatedAt: previousRound?.createdAt ?? null,
+        previousRoundStartedAt: previousRound?.startedAt ?? null,
+        previousRoundCompletedAt: previousRound?.completedAt ?? null,
+        previousRoundSummaryCreatedAt: previousRoundSummaryRow?.createdAt ?? null,
+        comments: rootUserComments,
+      });
       const rows: Array<{
         roundParticipantId: string;
         participantId: string;
@@ -1373,6 +1499,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
             participantNames,
             facilitatorName,
             referencePath: meeting.referencePath,
+            operatorComments: operatorCommentBodies,
           })
           : round.kind === "summary"
             ? finalSummaryPromptBody({
@@ -1380,6 +1507,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
               referencePath: meeting.referencePath,
               facilitatorName,
               summaryBodies: priorRoundSummaryRows.map((summaryRow) => summaryRow.body),
+              operatorComments: operatorCommentBodies,
             })
           : discussionPromptBody({
             roundNumber: round.roundNumber,
@@ -1389,6 +1517,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
             referencePath: meeting.referencePath,
             priorRoundSummary: previousRoundSummaryBody,
             ownPreviousResponse: previousResponseBodyByParticipantId.get(row.participantId) ?? null,
+            operatorComments: operatorCommentBodies,
           });
 
         const promptComment = await issueSvcTx.addCommentInTx(tx, row.childIssueId, {
@@ -2726,10 +2855,21 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     };
     actor: MeetingActor;
   }) {
-    if (input.comment.authorKind !== "agent" || !input.comment.authorAgentId) return;
-
     const meeting = await findMeetingByIssueId(input.issueId);
     if (!meeting) return;
+
+    if (input.issueId === meeting.rootIssueId && input.comment.authorKind === "user") {
+      await logMeetingActivity(input.actor, meeting.companyId, meeting.id, "meeting.operator_comment_added", {
+        commentId: input.comment.id,
+        roundNumber: meeting.currentRoundNumber,
+        roundKind: meeting.currentRoundNumber
+          ? await getCurrentRound(meeting.id, meeting.currentRoundNumber).then((round) => round?.kind ?? null)
+          : null,
+      });
+      return;
+    }
+
+    if (input.comment.authorKind !== "agent" || !input.comment.authorAgentId) return;
 
     const round = await getCurrentRound(meeting.id, meeting.currentRoundNumber);
     if (!round || !["collecting", "dispatching", "awaiting_operator", "timed_out"].includes(round.status)) return;

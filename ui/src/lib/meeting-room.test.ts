@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingRoomDTO } from "@paperclipai/shared";
 import {
+  canAddOperatorComment,
   canContinueMeeting,
   canPauseMeeting,
   canRemindMeetingParticipant,
@@ -95,6 +96,7 @@ describe("meeting room helpers", () => {
   it("computes high-level control visibility", () => {
     const awaiting = createMeetingRoom();
     expect(canContinueMeeting(awaiting)).toBe(true);
+    expect(canAddOperatorComment(awaiting)).toBe(true);
     expect(canPauseMeeting(awaiting)).toBe(true);
     expect(canResumeMeeting(awaiting)).toBe(false);
     expect(canRequestMeetingSummary(awaiting)).toBe(true);
@@ -102,8 +104,14 @@ describe("meeting room helpers", () => {
     const paused = createMeetingRoom({
       meeting: { ...awaiting.meeting, status: "paused" },
     });
+    expect(canAddOperatorComment(paused)).toBe(true);
     expect(canPauseMeeting(paused)).toBe(false);
     expect(canResumeMeeting(paused)).toBe(true);
+
+    const completed = createMeetingRoom({
+      meeting: { ...awaiting.meeting, status: "completed" },
+    });
+    expect(canAddOperatorComment(completed)).toBe(false);
   });
 
   it("gates remind/skip by current round and participant status", () => {

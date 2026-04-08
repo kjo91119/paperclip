@@ -79,6 +79,16 @@ export function canRequestMeetingSummary(room: MeetingRoomDTO): boolean {
   );
 }
 
+export function canAddOperatorComment(room: MeetingRoomDTO): boolean {
+  return (
+    room.meeting.status !== "draft"
+    && room.meeting.status !== "completed"
+    && room.meeting.status !== "partial_completed"
+    && room.meeting.status !== "failed"
+    && room.meeting.status !== "cancelled"
+  );
+}
+
 export function canRemindMeetingParticipant(
   room: MeetingRoomDTO,
   participant: MeetingCurrentRoundParticipantSummary,

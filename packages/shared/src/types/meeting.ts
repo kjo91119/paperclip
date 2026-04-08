@@ -14,6 +14,7 @@ export type MeetingTranscriptEntryKind =
   | "round_summary"
   | "final_summary"
   | "late_response"
+  | "operator_comment"
   | "operator_signal"
   | "meeting_completed";
 

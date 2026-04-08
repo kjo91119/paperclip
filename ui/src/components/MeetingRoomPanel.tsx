@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Issue, MeetingCurrentRoundParticipantSummary, MeetingRoomDTO } from "@paperclipai/shared";
 import {
@@ -12,9 +12,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { meetingsApi } from "../api/meetings";
+import { issuesApi } from "../api/issues";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import {
+  canAddOperatorComment,
   canStartMeeting,
   canContinueMeeting,
   canPauseMeeting,
@@ -34,6 +36,7 @@ import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { Button } from "./ui/button";
 import { MarkdownBody } from "./MarkdownBody";
 import { Identity } from "./Identity";
+import { Textarea } from "./ui/textarea";
 
 type MeetingRoomAction =
   | { kind: "start" }
@@ -49,6 +52,7 @@ function transcriptEntryLabel(entry: MeetingRoomDTO["transcript"][number]) {
   if (entry.entryKind === "round_summary") return "라운드 요약";
   if (entry.entryKind === "final_summary") return "최종 요약";
   if (entry.entryKind === "meeting_completed") return "회의 종료";
+  if (entry.entryKind === "operator_comment") return "운영자 코멘트";
   if (entry.entryKind === "operator_signal") return "운영자 신호";
   if (entry.entryKind === "late_response") return "지연 응답";
   if (entry.entryKind === "participant_response_extra") return "추가 의견";
@@ -60,7 +64,7 @@ function transcriptAuthorName(
   agentById: Map<string, Agent>,
 ) {
   if (entry.authorKind === "system") return "시스템";
-  if (entry.authorKind === "user") return "보드";
+  if (entry.authorKind === "user") return "운영자";
   if (entry.participantAgentId) return agentById.get(entry.participantAgentId)?.name ?? "에이전트";
   return "에이전트";
 }
@@ -102,6 +106,7 @@ export function MeetingRoomPanel({
 }) {
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
+  const [operatorCommentBody, setOperatorCommentBody] = useState("");
   const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
   const statusNotice = describeMeetingStatus(room);
   const executionEstimate = estimateMeetingExecution(room);
@@ -118,6 +123,7 @@ export function MeetingRoomPanel({
       ...issueRefs.flatMap((issueRef) => [
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueRef) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.meetings.byIssue(issueRef) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments(issueRef) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity(issueRef) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueRef) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.issues.liveRuns(issueRef) }),
@@ -161,6 +167,26 @@ export function MeetingRoomPanel({
     },
   });
 
+  const operatorCommentMutation = useMutation({
+    mutationFn: async (body: string) => issuesApi.addComment(issue.id, body),
+    onSuccess: async () => {
+      setOperatorCommentBody("");
+      await invalidateMeetingQueries();
+      pushToast({
+        title: "운영자 코멘트 추가",
+        body: "회의 transcript와 다음 라운드 컨텍스트를 최신 상태로 갱신했습니다.",
+        tone: "success",
+      });
+    },
+    onError: (error) => {
+      pushToast({
+        title: "운영자 코멘트 추가 실패",
+        body: error instanceof Error ? error.message : "회의 코멘트를 저장하지 못했습니다.",
+        tone: "error",
+      });
+    },
+  });
+
   const compactClass = compact ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1.7fr)_18rem]";
   const transcriptEmptyMessage =
     room.meeting.status === "draft"
@@ -178,6 +204,7 @@ export function MeetingRoomPanel({
         : room.meeting.status === "failed"
           ? "회의가 실패 상태라 현재 라운드 상태를 더 진행할 수 없습니다."
           : "현재 라운드 참가자 상태가 없습니다.";
+  const canComposeOperatorComment = canAddOperatorComment(room);
 
   return (
     <div className="space-y-4">
@@ -275,13 +302,42 @@ export function MeetingRoomPanel({
 
       <div className={cn("grid gap-4", compactClass)}>
         <div className="rounded-2xl border border-border bg-background/70">
-          <div className="border-b border-border px-4 py-3">
-            <div className="text-sm font-semibold text-foreground">회의 transcript</div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              raw 댓글이 아니라 orchestrator가 정규화한 transcript 기준으로 표시합니다.
-            </p>
-          </div>
+        <div className="border-b border-border px-4 py-3">
+          <div className="text-sm font-semibold text-foreground">회의 transcript</div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            raw 댓글이 아니라 orchestrator가 정규화한 transcript 기준으로 표시합니다.
+          </p>
+        </div>
           <div className="space-y-4 p-4">
+            <div className="rounded-xl border border-border bg-card/70 p-3">
+              <div className="text-sm font-semibold text-foreground">운영자 코멘트</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                여기에 남긴 코멘트는 transcript에 보이고, 이후 재촉·다음 라운드·최종 요약 요청 시 프롬프트에도 함께 반영됩니다.
+              </p>
+              <Textarea
+                value={operatorCommentBody}
+                onChange={(event) => setOperatorCommentBody(event.target.value)}
+                className="mt-3 min-h-[110px]"
+                rows={compact ? 4 : 5}
+                placeholder="예: CEO 의견 쪽에 더 공감해. 다만 신뢰 페이지뿐 아니라 실제 연락처, 운영주체, 카테고리 정리를 같이 보강하는 방향으로 다시 토론해줘."
+                disabled={!canComposeOperatorComment || operatorCommentMutation.isPending}
+              />
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {canComposeOperatorComment
+                    ? "현재 라운드를 바로 바꾸지는 않지만, 다음 회의 전이에서 운영자 의견으로 반영됩니다."
+                    : "완료되었거나 종료된 회의에는 새 운영자 코멘트를 추가할 수 없습니다."}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => operatorCommentMutation.mutate(operatorCommentBody.trim())}
+                  disabled={!canComposeOperatorComment || !operatorCommentBody.trim() || operatorCommentMutation.isPending}
+                >
+                  {operatorCommentMutation.isPending ? "등록 중…" : "운영자 코멘트 추가"}
+                </Button>
+              </div>
+            </div>
             {transcript.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
                 {transcriptEmptyMessage}

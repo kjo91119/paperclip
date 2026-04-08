@@ -687,6 +687,32 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       }),
     ]);
 
+    const operatorComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: created!.rootIssue.id,
+      authorKind: "user",
+      authorAgentId: null,
+      authorUserId: "board-user",
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "운영자 코멘트: 두 의견을 합쳐서 신뢰 신호와 카테고리 구조를 같이 잡는 절충안을 중심으로 다시 토론해 주세요.",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: created!.rootIssue.id,
+      comment: {
+        id: operatorComment.id,
+        authorKind: "user",
+        authorAgentId: null,
+      },
+      actor: {
+        actorType: "user",
+        actorId: "board-user",
+        agentId: null,
+        runId: null,
+      },
+    });
+
     dispatchCalls = [];
     const continued = await svc.continueMeetingByIssueId(created!.rootIssue.id, {
       actorType: "user",
@@ -706,9 +732,13 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       "participant_response",
       "round_summary",
       "operator_signal",
+      "operator_comment",
       "round_opened",
     ]);
     expect(dispatchCalls).toHaveLength(2);
+    expect(continued?.transcript.some((entry) =>
+      entry.entryKind === "operator_comment" && entry.body.includes("절충안")
+    )).toBe(true);
 
     const latestPromptComments = await db
       .select({
@@ -723,8 +753,16 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     const latestBodies = latestPromptComments.slice(-2).map((comment) => comment.body);
     expect(latestBodies[0]).toContain("이전 라운드 요약:");
     expect(latestBodies[0]).toContain("당신의 이전 입장:");
+    expect(latestBodies[0]).toContain("운영자 코멘트:");
+    expect(latestBodies[0]).toContain("절충안");
     expect(latestBodies[0]).toContain("동의하는 주장");
     expect(latestBodies[1]).toContain("이번 라운드에서는 다른 참가자의 핵심 주장에 반응해 주세요.");
+
+    const operatorCommentActivity = await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(and(eq(activityLog.entityId, created!.meeting.id), eq(activityLog.action, "meeting.operator_comment_added")));
+    expect(operatorCommentActivity).toHaveLength(1);
   });
 
   it("supports partial continue after skipping a missing participant", async () => {
@@ -1009,6 +1047,32 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       }),
     ]);
 
+    const operatorComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: created!.rootIssue.id,
+      authorKind: "user",
+      authorAgentId: null,
+      authorUserId: "board-user",
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "운영자 코멘트: 최종 요약에서는 광고 승인을 위한 우선순위와 실행 순서를 분명히 정리해 주세요.",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: created!.rootIssue.id,
+      comment: {
+        id: operatorComment.id,
+        authorKind: "user",
+        authorAgentId: null,
+      },
+      actor: {
+        actorType: "user",
+        actorId: "board-user",
+        agentId: null,
+        runId: null,
+      },
+    });
+
     dispatchCalls = [];
     const summarized = await svc.summaryMeetingByIssueId(created!.rootIssue.id, {}, {
       actorType: "user",
@@ -1040,6 +1104,8 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       .then((rows) => rows.at(-1)?.body ?? "");
     expect(latestPrompt).toContain("전체회의 최종 요약 요청");
     expect(latestPrompt).toContain("이전 라운드 요약:");
+    expect(latestPrompt).toContain("운영자 코멘트:");
+    expect(latestPrompt).toContain("우선순위와 실행 순서");
   });
 
   it("uses continue to transition from the last discussion round into summary", async () => {
