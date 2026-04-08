@@ -1946,7 +1946,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       let summaryRound = existingSummaryRound;
       let createdNewRound = false;
 
-      if (!summaryRound || summaryRound.status === "completed") {
+      if (!summaryRound || summaryRound.status === "completed" || summaryRound.status === "cancelled") {
         const [insertedRound] = await tx
           .insert(issueMeetingRounds)
           .values({
