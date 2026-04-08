@@ -114,6 +114,7 @@
 - `server/src/routes/issues.ts`
 - `server/src/routes/authz.ts`
 - `server/src/__tests__/meetings-service.test.ts`
+- `server/src/__tests__/issues-service.test.ts`
 - `server/src/__tests__/company-skills-routes.test.ts`
 
 ### 4.3 UI
@@ -131,6 +132,7 @@
 - `ui/src/lib/meeting-room.ts`
 - `ui/src/lib/issue-detail-controls.ts`
 - `ui/src/lib/inbox.ts`
+- `ui/src/lib/inbox.test.ts`
 - `ui/src/lib/queryKeys.ts`
 - `ui/src/pages/Inbox.test.tsx`
 - `ui/src/pages/OfficeView.model.test.ts`
@@ -141,6 +143,7 @@
 
 - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-plan.md`
 - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-cross-verification.md`
+- `doc/plans/2026-04-07-facilitated-meeting-orchestrator-phase-a-confirmation.md`
 - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-phase-b-cross-verification.md`
 - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-phase-c-cross-verification.md`
 - `doc/plans/2026-04-07-facilitated-meeting-orchestrator-phase-d-cross-verification.md`
