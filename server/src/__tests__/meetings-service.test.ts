@@ -1323,6 +1323,164 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     expect(summaryRound?.summaryRequestedByUserId).toBe("board-user");
   });
 
+  it("reopens a followup round for all participants from an awaiting-operator summary round", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "운영자 코멘트 이후 전원 재토론 확인",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const participants = await db
+      .select()
+      .from(issueMeetingParticipants)
+      .where(eq(issueMeetingParticipants.meetingId, created!.meeting.id))
+      .orderBy(issueMeetingParticipants.speakingOrder);
+
+    const openingComments = await db.insert(issueComments).values([
+      {
+        companyId,
+        issueId: participants[0]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[0]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CEO opening 의견",
+      },
+      {
+        companyId,
+        issueId: participants[1]!.childIssueId,
+        authorKind: "agent",
+        authorAgentId: participants[1]!.agentId,
+        authorUserId: null,
+        authorSystemKey: null,
+        systemCommentKind: null,
+        body: "CTO opening 의견",
+      },
+    ]).returning();
+
+    await Promise.all([
+      svc.onIssueCommentAdded({
+        issueId: participants[0]!.childIssueId,
+        comment: {
+          id: openingComments[0]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[0]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[0]!.agentId,
+          agentId: participants[0]!.agentId,
+          runId: null,
+        },
+      }),
+      svc.onIssueCommentAdded({
+        issueId: participants[1]!.childIssueId,
+        comment: {
+          id: openingComments[1]!.id,
+          authorKind: "agent",
+          authorAgentId: participants[1]!.agentId,
+        },
+        actor: {
+          actorType: "agent",
+          actorId: participants[1]!.agentId,
+          agentId: participants[1]!.agentId,
+          runId: null,
+        },
+      }),
+    ]);
+
+    await svc.summaryMeetingByIssueId(created!.rootIssue.id, {}, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const operatorComment = await db.insert(issueComments).values({
+      companyId,
+      issueId: created!.rootIssue.id,
+      authorKind: "user",
+      authorAgentId: null,
+      authorUserId: "board-user",
+      authorSystemKey: null,
+      systemCommentKind: null,
+      body: "운영자 코멘트: CTO 의견에 동의합니다. 다만 너무 느리게 가지 말고 최소 2주 공개 리듬은 같이 제안해 주세요.",
+    }).returning().then((rows) => rows[0]!);
+
+    await svc.onIssueCommentAdded({
+      issueId: created!.rootIssue.id,
+      comment: {
+        id: operatorComment.id,
+        authorKind: "user",
+        authorAgentId: null,
+      },
+      actor: {
+        actorType: "user",
+        actorId: "board-user",
+        agentId: null,
+        runId: null,
+      },
+    });
+
+    await svc.skipParticipantByIssueId(created!.rootIssue.id, ceoId, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    dispatchCalls = [];
+    const reopened = await svc.reopenDiscussionByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    expect(reopened?.meeting.status).toBe("running");
+    expect(reopened?.meeting.currentRoundKind).toBe("followup");
+    expect(reopened?.currentRoundParticipants).toHaveLength(2);
+    expect(dispatchCalls).toHaveLength(2);
+
+    const summaryRound = await db
+      .select()
+      .from(issueMeetingRounds)
+      .where(and(eq(issueMeetingRounds.meetingId, created!.meeting.id), eq(issueMeetingRounds.kind, "summary")))
+      .then((rows) => rows[0] ?? null);
+    expect(summaryRound?.status).toBe("cancelled");
+
+    const prompts = await db
+      .select({ issueId: issueComments.issueId, body: issueComments.body })
+      .from(issueComments)
+      .where(inArray(issueComments.issueId, participants.map((participant) => participant.childIssueId)))
+      .orderBy(issueComments.createdAt);
+    const followupPrompts = prompts.filter((row) =>
+      row.body.includes("답변 형식:")
+      && row.body.includes("운영자 코멘트:")
+      && row.body.includes("1. 동의하는 주장"));
+    expect(followupPrompts).toHaveLength(2);
+    for (const prompt of followupPrompts) {
+      expect(prompt.body).toContain("CTO 의견에 동의합니다");
+      expect(prompt.body).toContain("최소 2주 공개 리듬");
+    }
+  });
+
   it("completes the meeting when the summarizer responds", async () => {
     const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
     const created = await svc.createMeeting({

@@ -2787,6 +2787,145 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     return getById(freshMeeting.id);
   }
 
+  async function reopenDiscussionByIssueId(issueId: string, actor: MeetingActor) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+
+    await refreshMeetingState(meeting.id);
+    const freshMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, meeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!freshMeeting) throw notFound("Meeting not found");
+    if (freshMeeting.status !== "awaiting_operator") {
+      throw unprocessable("Meeting can only reopen discussion from awaiting_operator");
+    }
+
+    const currentRound = await getCurrentRound(freshMeeting.id, freshMeeting.currentRoundNumber);
+    if (!currentRound) throw notFound("Current meeting round not found");
+    if (currentRound.kind !== "summary") {
+      throw unprocessable("Reopening discussion is only supported from a summary round");
+    }
+    if (!["awaiting_operator", "timed_out", "failed"].includes(currentRound.status)) {
+      throw unprocessable("Summary round is not ready to reopen discussion");
+    }
+
+    const prepared = await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+      const activeParticipants = await tx
+        .select()
+        .from(issueMeetingParticipants)
+        .where(and(eq(issueMeetingParticipants.meetingId, freshMeeting.id), eq(issueMeetingParticipants.status, "active")))
+        .orderBy(asc(issueMeetingParticipants.speakingOrder), asc(issueMeetingParticipants.createdAt));
+
+      if (activeParticipants.length < 2) {
+        throw unprocessable("Reopening discussion requires at least two active participants");
+      }
+
+      const reopenedAt = now();
+
+      await tx
+        .update(issueMeetingRoundParticipants)
+        .set({
+          status: "skipped",
+          skipReason: "operator.reopen_discussion",
+          skippedAt: reopenedAt,
+          updatedAt: reopenedAt,
+        })
+        .where(
+          and(
+            eq(issueMeetingRoundParticipants.roundId, currentRound.id),
+            inArray(
+              issueMeetingRoundParticipants.status,
+              ["pending_dispatch", "queued", "coalesced", "deferred", "running"],
+            ),
+          ),
+        );
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          status: "cancelled",
+          completedAt: currentRound.completedAt ?? reopenedAt,
+          updatedAt: reopenedAt,
+          transitionVersion: sql`${issueMeetingRounds.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetingRounds.id, currentRound.id));
+
+      const [nextRound] = await tx
+        .insert(issueMeetingRounds)
+        .values({
+          companyId: freshMeeting.companyId,
+          meetingId: freshMeeting.id,
+          roundNumber: (freshMeeting.currentRoundNumber ?? 0) + 1,
+          kind: "followup",
+          status: "dispatching",
+          summaryRequestedByUserId: null,
+          startedAt: reopenedAt,
+          deadlineAt: new Date(reopenedAt.getTime() + (freshMeeting.responseTimeoutSec * 1000)),
+          createdAt: reopenedAt,
+          updatedAt: reopenedAt,
+        })
+        .returning();
+
+      const roundOpenComment = await issueSvcTx.addCommentInTx(tx, freshMeeting.rootIssueId, {
+        body: roundOpenedBody({ roundNumber: nextRound.roundNumber, agenda: freshMeeting.agenda }),
+        systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+        systemCommentKind: "round_opened",
+      });
+
+      await tx
+        .update(issueMeetingRounds)
+        .set({
+          roundOpenRootCommentId: roundOpenComment.id,
+          updatedAt: reopenedAt,
+        })
+        .where(eq(issueMeetingRounds.id, nextRound.id));
+
+      await tx.insert(issueMeetingRoundParticipants).values(
+        activeParticipants.map((participant) => ({
+          companyId: freshMeeting.companyId,
+          meetingId: freshMeeting.id,
+          roundId: nextRound.id,
+          participantId: participant.id,
+          agentId: participant.agentId,
+          childIssueId: participant.childIssueId,
+          status: "pending_dispatch",
+          createdAt: reopenedAt,
+          updatedAt: reopenedAt,
+        })),
+      );
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: "running",
+          currentRoundNumber: nextRound.roundNumber,
+          updatedAt: reopenedAt,
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, freshMeeting.id));
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: freshMeeting.rootIssueId,
+        meetingStatus: "running",
+      });
+
+      return nextRound;
+    });
+
+    await logMeetingActivity(actor, freshMeeting.companyId, freshMeeting.id, "meeting.round_opened", {
+      roundId: prepared.id,
+      roundNumber: prepared.roundNumber,
+      roundKind: prepared.kind,
+      reason: "reopen_from_summary",
+    });
+
+    await dispatchPendingParticipants(freshMeeting.id, prepared.id, actor);
+    return getById(freshMeeting.id);
+  }
+
   async function archiveMeetingByIssueId(issueId: string, actor: MeetingActor) {
     const meeting = await findMeetingByIssueId(issueId);
     if (!meeting) throw notFound("Meeting not found");
@@ -3003,6 +3142,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     getByIssueId,
     onIssueCommentAdded,
     pauseMeetingByIssueId,
+    reopenDiscussionByIssueId,
     refreshMeetingState,
     remindParticipantByIssueId,
     resumeMeetingByIssueId,

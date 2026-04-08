@@ -150,6 +150,17 @@ export function meetingRoutes(db: Db) {
     res.json(dto);
   });
 
+  router.post("/issues/:issueId/meeting/reopen-discussion", async (req, res) => {
+    const loaded = await loadControlledIssue(req);
+    if (!loaded) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const dto = await meetings.reopenDiscussionByIssueId(loaded.normalizedIssueId, actor);
+    res.json(dto);
+  });
+
   router.post("/issues/:issueId/meeting/participants/:agentId/skip", async (req, res) => {
     const loaded = await loadControlledIssue(req);
     if (!loaded) {

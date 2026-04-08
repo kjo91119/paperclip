@@ -20,6 +20,7 @@ import {
   canStartMeeting,
   canContinueMeeting,
   canPauseMeeting,
+  canReopenDiscussion,
   canRemindMeetingParticipant,
   canRequestMeetingSummary,
   canResumeMeeting,
@@ -46,6 +47,7 @@ type MeetingRoomAction =
   | { kind: "pause" }
   | { kind: "resume" }
   | { kind: "continue" }
+  | { kind: "reopen_discussion" }
   | { kind: "summary" }
   | { kind: "remind"; agentId: string }
   | { kind: "skip"; agentId: string };
@@ -77,6 +79,7 @@ function controlActionLabel(action: MeetingRoomAction["kind"]) {
   if (action === "pause") return "회의 일시중지";
   if (action === "resume") return "회의 재개";
   if (action === "continue") return "다음 라운드 진행";
+  if (action === "reopen_discussion") return "전원 재토론";
   if (action === "summary") return "최종 요약 요청";
   if (action === "remind") return "참가자 재촉";
   return "참가자 건너뛰기";
@@ -149,6 +152,7 @@ export function MeetingRoomPanel({
       if (action.kind === "pause") return meetingsApi.pause(issue.id);
       if (action.kind === "resume") return meetingsApi.resume(issue.id);
       if (action.kind === "continue") return meetingsApi.continue(issue.id);
+      if (action.kind === "reopen_discussion") return meetingsApi.reopenDiscussion(issue.id);
       if (action.kind === "summary") return meetingsApi.summary(issue.id);
       if (action.kind === "remind") return meetingsApi.remind(issue.id, action.agentId);
       return meetingsApi.skip(issue.id, action.agentId);
@@ -269,6 +273,16 @@ export function MeetingRoomPanel({
               >
                 <ChevronRight className="mr-1 h-3.5 w-3.5" />
                 다음 라운드
+              </Button>
+            ) : null}
+            {canReopenDiscussion(room) ? (
+              <Button
+                size="sm"
+                onClick={() => controlMutation.mutate({ kind: "reopen_discussion" })}
+                disabled={controlMutation.isPending}
+              >
+                <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                전원 재토론
               </Button>
             ) : null}
             {canRequestMeetingSummary(room) ? (

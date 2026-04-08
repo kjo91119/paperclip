@@ -6,6 +6,7 @@ import {
   canAddOperatorComment,
   canContinueMeeting,
   canPauseMeeting,
+  canReopenDiscussion,
   canRemindMeetingParticipant,
   canRequestMeetingSummary,
   canResumeMeeting,
@@ -164,6 +165,26 @@ describe("meeting room helpers", () => {
     expect(estimate.maxResponses).toBe(10);
     expect(estimate.estimatedPromptTokensMin).toBeGreaterThan(0);
     expect(formatMeetingDurationLabel(room.meeting.responseTimeoutSec)).toBe("30분");
+  });
+
+  it("allows reopening discussion only from an awaiting-operator summary round", () => {
+    const summaryRoom = createMeetingRoom({
+      meeting: {
+        ...createMeetingRoom().meeting,
+        status: "awaiting_operator",
+        currentRoundKind: "summary",
+      },
+    });
+    expect(canReopenDiscussion(summaryRoom)).toBe(true);
+
+    const discussionRoom = createMeetingRoom({
+      meeting: {
+        ...createMeetingRoom().meeting,
+        status: "awaiting_operator",
+        currentRoundKind: "discussion",
+      },
+    });
+    expect(canReopenDiscussion(discussionRoom)).toBe(false);
   });
 
   it("produces guardrail notes and status copy for edge states", () => {

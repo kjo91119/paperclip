@@ -73,6 +73,10 @@ export function canContinueMeeting(room: MeetingRoomDTO): boolean {
   return room.meeting.status === "awaiting_operator" && room.meeting.currentRoundKind !== "summary";
 }
 
+export function canReopenDiscussion(room: MeetingRoomDTO): boolean {
+  return room.meeting.status === "awaiting_operator" && room.meeting.currentRoundKind === "summary";
+}
+
 export function canRequestMeetingSummary(room: MeetingRoomDTO): boolean {
   return (
     (room.meeting.status === "running" || room.meeting.status === "awaiting_operator")
