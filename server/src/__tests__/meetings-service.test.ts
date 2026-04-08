@@ -212,6 +212,59 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     }
   });
 
+  it("archives the root meeting issue without deleting meeting history", async () => {
+    const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
+
+    const created = await svc.createMeeting({
+      companyId,
+      agenda: "오래된 회의를 오피스 목록에서 정리",
+      participantAgentIds: [ceoId, ctoId],
+      facilitatorAgentId: ceoId,
+      summaryAgentId: ceoId,
+      projectId: null,
+      goalId: null,
+      referencePath: null,
+      maxDiscussionRounds: 1,
+      responseTimeoutSec: 300,
+      autoStart: true,
+      autoContinue: false,
+    }, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    const archived = await svc.archiveMeetingByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    expect(archived.rootIssueId).toBe(created!.rootIssue.id);
+
+    const rootIssue = await db
+      .select({ hiddenAt: issues.hiddenAt })
+      .from(issues)
+      .where(eq(issues.id, created!.rootIssue.id))
+      .then((rows) => rows[0] ?? null);
+    expect(rootIssue?.hiddenAt).not.toBeNull();
+
+    const meetingRow = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, created!.meeting.id))
+      .then((rows) => rows[0] ?? null);
+    expect(meetingRow).not.toBeNull();
+
+    const archiveActivity = await db
+      .select({ action: activityLog.action })
+      .from(activityLog)
+      .where(and(eq(activityLog.entityId, created!.meeting.id), eq(activityLog.action, "meeting.archived")));
+    expect(archiveActivity).toHaveLength(1);
+  });
+
   it("marks participant responses and completes the round with root summary comments", async () => {
     const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
     const created = await svc.createMeeting({

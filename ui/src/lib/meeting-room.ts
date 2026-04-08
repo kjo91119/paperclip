@@ -4,6 +4,7 @@ import type {
   IssueMeetingStatus,
   MeetingCurrentRoundParticipantSummary,
   MeetingRoomDTO,
+  MeetingTranscriptEntry,
 } from "@paperclipai/shared";
 
 export interface MeetingExecutionEstimate {
@@ -87,6 +88,22 @@ export function canAddOperatorComment(room: MeetingRoomDTO): boolean {
     && room.meeting.status !== "failed"
     && room.meeting.status !== "cancelled"
   );
+}
+
+export function shouldCollapseMeetingTranscriptEntry(entry: MeetingTranscriptEntry): boolean {
+  return entry.entryKind === "round_summary";
+}
+
+export function summarizeMeetingTranscriptEntry(entry: MeetingTranscriptEntry): string {
+  if (entry.entryKind !== "round_summary") return "";
+
+  const respondedCount = entry.body.match(/수집된 응답:\s*(\d+)건/u)?.[1] ?? null;
+  const parts = [`라운드 ${entry.roundNumber ?? "?"} 요약`];
+  if (respondedCount) {
+    parts.push(`응답 ${respondedCount}건`);
+  }
+  parts.push("기본 접힘");
+  return parts.join(" · ");
 }
 
 export function canRemindMeetingParticipant(

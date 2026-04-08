@@ -11,6 +11,7 @@ import {
   PanelsTopLeft,
   Send,
   Sparkles,
+  Trash2,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,7 @@ export function OfficeConversationPanel({
   threadIssues,
   selectedThreadIssue,
   onSelectThread,
+  onCleanupThread,
   threadComments,
   threadCommentsLoading,
   threadCommentsError,
@@ -96,6 +98,7 @@ export function OfficeConversationPanel({
   canCommentCurrentThread,
   canCreateIssue,
   isSending,
+  cleanupThreadIssueId,
   lastTouchedIssue,
 }: {
   companyId: string;
@@ -110,6 +113,7 @@ export function OfficeConversationPanel({
   threadIssues: Issue[];
   selectedThreadIssue: Issue | null;
   onSelectThread: (issueId: string) => void;
+  onCleanupThread: (issue: Issue) => void;
   threadComments: IssueComment[];
   threadCommentsLoading: boolean;
   threadCommentsError: string | null;
@@ -152,6 +156,7 @@ export function OfficeConversationPanel({
   canCommentCurrentThread: boolean;
   canCreateIssue: boolean;
   isSending: boolean;
+  cleanupThreadIssueId: string | null;
   lastTouchedIssue: Issue | null;
 }) {
   const selectedThreadProject = useMemo(() => {
@@ -287,6 +292,8 @@ export function OfficeConversationPanel({
             issues={threadIssues}
             selectedIssueId={selectedThreadIssue?.id ?? null}
             onSelectIssue={onSelectThread}
+            onCleanupIssue={onCleanupThread}
+            cleanupIssueId={cleanupThreadIssueId}
           />
         </div>
 
@@ -453,11 +460,15 @@ function ThreadList({
   issues,
   selectedIssueId,
   onSelectIssue,
+  onCleanupIssue,
+  cleanupIssueId,
 }: {
   mode: OfficeConversationMode;
   issues: Issue[];
   selectedIssueId: string | null;
   onSelectIssue: (issueId: string) => void;
+  onCleanupIssue: (issue: Issue) => void;
+  cleanupIssueId: string | null;
 }) {
   return (
     <div className="rounded-[24px] border border-border bg-background/70">
@@ -477,33 +488,52 @@ function ThreadList({
             issues.map((issue) => {
               const selected = selectedIssueId === issue.id;
               return (
-                <button
+                <div
                   key={issue.id}
-                  type="button"
-                  onClick={() => onSelectIssue(issue.id)}
                   className={cn(
-                    "w-full rounded-2xl border px-3 py-3 text-left transition-colors",
+                    "relative rounded-2xl border px-3 py-3 transition-colors",
                     selected
                       ? "border-cyan-400/40 bg-cyan-400/10 text-foreground"
                       : "border-border bg-card text-foreground hover:bg-accent/60",
                   )}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {issue.identifier ?? issue.id.slice(0, 8)}
-                    </span>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {formatStatusLabel(issue.status)}
-                    </span>
-                  </div>
-                  <div className="mt-2 line-clamp-2 text-sm font-medium">{issue.title}</div>
-                  <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-                    {getOfficeConversationPreview(issue)}
-                  </div>
-                  <div className="mt-2 text-[11px] text-muted-foreground">
-                    {relativeTime(issue.lastExternalCommentAt ?? issue.updatedAt)}
-                  </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => onSelectIssue(issue.id)}
+                    className="block w-full pr-24 text-left"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {issue.identifier ?? issue.id.slice(0, 8)}
+                      </span>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                        {formatStatusLabel(issue.status)}
+                      </span>
+                    </div>
+                    <div className="mt-2 line-clamp-2 text-sm font-medium">{issue.title}</div>
+                    <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                      {getOfficeConversationPreview(issue)}
+                    </div>
+                    <div className="mt-2 text-[11px] text-muted-foreground">
+                      {relativeTime(issue.lastExternalCommentAt ?? issue.updatedAt)}
+                    </div>
+                  </button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="absolute right-3 top-3 h-8 gap-1 rounded-full text-muted-foreground hover:text-foreground"
+                    aria-label="스레드 정리"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCleanupIssue(issue);
+                    }}
+                    disabled={cleanupIssueId === issue.id}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    정리
+                  </Button>
+                </div>
               );
             })
           ) : (

@@ -9,6 +9,8 @@ export const meetingsApi = {
   start: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/start`, {}),
   pause: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/pause`, {}),
   resume: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/resume`, {}),
+  archive: (issueId: string) =>
+    api.post<{ meetingId: string; rootIssueId: string; hiddenAt: string }>(`/issues/${issueId}/meeting/archive`, {}),
   continue: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/continue`, {}),
   summary: (issueId: string, data?: { summaryAgentId?: string | null }) =>
     api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/summary`, data ?? {}),

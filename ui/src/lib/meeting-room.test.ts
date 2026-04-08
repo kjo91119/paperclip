@@ -17,6 +17,8 @@ import {
   formatMeetingRoundKindLabel,
   formatMeetingStatusLabel,
   meetingGuardrailNotes,
+  shouldCollapseMeetingTranscriptEntry,
+  summarizeMeetingTranscriptEntry,
 } from "./meeting-room";
 
 function createMeetingRoom(overrides: Partial<MeetingRoomDTO> = {}): MeetingRoomDTO {
@@ -187,5 +189,30 @@ describe("meeting room helpers", () => {
       title: "회의가 일시중지되었습니다",
       body: "재개하기 전까지 새 라운드 전이와 자동 dispatch가 멈춰 있습니다.",
     });
+  });
+
+  it("collapses verbose round summaries by default", () => {
+    const room = createMeetingRoom({
+      transcript: [
+        {
+          entryKind: "round_summary",
+          roundNumber: 1,
+          roundKind: "opening",
+          participantAgentId: null,
+          sourceIssueId: "issue-1",
+          sourceCommentId: "comment-1",
+          authorKind: "system",
+          systemCommentKind: "round_summary",
+          body: "라운드 1 요약\n\n수집된 응답: 3건\n\n긴 본문",
+          createdAt: new Date("2026-04-07T00:03:00.000Z"),
+          respondedAt: null,
+          speakingOrder: null,
+        },
+      ],
+    });
+
+    const entry = room.transcript[0]!;
+    expect(shouldCollapseMeetingTranscriptEntry(entry)).toBe(true);
+    expect(summarizeMeetingTranscriptEntry(entry)).toBe("라운드 1 요약 · 응답 3건 · 기본 접힘");
   });
 });

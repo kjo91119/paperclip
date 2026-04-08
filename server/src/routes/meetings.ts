@@ -112,6 +112,17 @@ export function meetingRoutes(db: Db) {
     res.json(dto);
   });
 
+  router.post("/issues/:issueId/meeting/archive", async (req, res) => {
+    const loaded = await loadControlledIssue(req);
+    if (!loaded) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    const actor = getActorInfo(req);
+    const archived = await meetings.archiveMeetingByIssueId(loaded.normalizedIssueId, actor);
+    res.json(archived);
+  });
+
   router.post("/issues/:issueId/meeting/participants/:agentId/remind", async (req, res) => {
     const loaded = await loadControlledIssue(req);
     if (!loaded) {

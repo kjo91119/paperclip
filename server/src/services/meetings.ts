@@ -2787,6 +2787,45 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     return getById(freshMeeting.id);
   }
 
+  async function archiveMeetingByIssueId(issueId: string, actor: MeetingActor) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+    if (meeting.rootIssueId !== issueId) {
+      throw unprocessable("Only the root meeting issue can be archived");
+    }
+
+    const archivedAt = now();
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(issues)
+        .set({
+          hiddenAt: archivedAt,
+          updatedAt: archivedAt,
+        })
+        .where(eq(issues.id, meeting.rootIssueId));
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          updatedAt: archivedAt,
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, meeting.id));
+    });
+
+    await logMeetingActivity(actor, meeting.companyId, meeting.id, "meeting.archived", {
+      rootIssueId: meeting.rootIssueId,
+      hiddenAt: archivedAt.toISOString(),
+    });
+
+    return {
+      meetingId: meeting.id,
+      rootIssueId: meeting.rootIssueId,
+      hiddenAt: archivedAt,
+    };
+  }
+
   async function summaryMeetingByIssueId(
     issueId: string,
     input: RequestMeetingSummary,
@@ -2957,6 +2996,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
   }
 
   return {
+    archiveMeetingByIssueId,
     createMeeting,
     continueMeetingByIssueId,
     getById,

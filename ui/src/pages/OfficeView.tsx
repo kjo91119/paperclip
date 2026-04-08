@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "@/lib/router";
-import type { Agent, Project } from "@paperclipai/shared";
+import type { Agent, Issue, Project } from "@paperclipai/shared";
 import {
   Bot,
   CircleDot,
@@ -793,6 +793,32 @@ export function OfficeView() {
     },
   });
 
+  const cleanupThread = useMutation({
+    mutationFn: async (issue: Issue) => {
+      if (issue.meetingMode === "orchestrated") {
+        return meetingsApi.archive(issue.id);
+      }
+      return issuesApi.update(issue.id, { hiddenAt: new Date().toISOString() });
+    },
+    onSuccess: async (_result, issue) => {
+      await invalidateOfficeData(issue.id, issue.meetingId ?? undefined);
+      setLastTouchedIssueId((current) => (current === issue.id ? null : current));
+      setSelectedThreadIssueId((current) => (current === issue.id ? "" : current));
+      pushToast({
+        title: issue.meetingMode === "orchestrated" ? "회의를 목록에서 정리했습니다" : "대화를 목록에서 정리했습니다",
+        body: "기록은 남겨두고 오피스 목록에서만 숨겼습니다.",
+        tone: "success",
+      });
+    },
+    onError: (mutationError, issue) => {
+      pushToast({
+        title: issue.meetingMode === "orchestrated" ? "회의 정리에 실패했습니다" : "대화 정리에 실패했습니다",
+        body: mutationError instanceof Error ? mutationError.message : "오피스 목록 정리를 처리하지 못했습니다.",
+        tone: "error",
+      });
+    },
+  });
+
   const templates = useMemo<OfficeTemplateAction[]>(
     () =>
       OFFICE_MARKETING_TEMPLATES.map((template) => ({
@@ -1024,6 +1050,13 @@ export function OfficeView() {
             threadIssues={threadIssues}
             selectedThreadIssue={resolvedThreadIssue}
             onSelectThread={setSelectedThreadIssueId}
+            onCleanupThread={(issue) => {
+              const label = issue.meetingMode === "orchestrated" ? "이 회의를" : "이 대화를";
+              if (!window.confirm(`${label} 오피스 목록에서 정리할까요?\n기록은 남겨두고 목록에서만 숨깁니다.`)) {
+                return;
+              }
+              cleanupThread.mutate(issue);
+            }}
             threadComments={threadCommentsQuery.data ?? []}
             threadCommentsLoading={threadCommentsQuery.isLoading}
             threadCommentsError={threadCommentsQuery.error instanceof Error ? threadCommentsQuery.error.message : null}
@@ -1097,6 +1130,7 @@ export function OfficeView() {
               )
             }
             isSending={createIssueFromOffice.isPending || commentOnSelectedIssue.isPending}
+            cleanupThreadIssueId={cleanupThread.isPending ? cleanupThread.variables?.id ?? null : null}
             lastTouchedIssue={lastTouchedIssue}
           />
         </div>

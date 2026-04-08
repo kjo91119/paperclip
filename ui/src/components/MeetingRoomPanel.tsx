@@ -31,12 +31,15 @@ import {
   formatMeetingRoundKindLabel,
   formatMeetingStatusLabel,
   meetingGuardrailNotes,
+  shouldCollapseMeetingTranscriptEntry,
+  summarizeMeetingTranscriptEntry,
 } from "../lib/meeting-room";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
 import { Button } from "./ui/button";
 import { MarkdownBody } from "./MarkdownBody";
 import { Identity } from "./Identity";
 import { Textarea } from "./ui/textarea";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 
 type MeetingRoomAction =
   | { kind: "start" }
@@ -309,17 +312,77 @@ export function MeetingRoomPanel({
           </p>
         </div>
           <div className="space-y-4 p-4">
+            {transcript.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                {transcriptEmptyMessage}
+              </div>
+            ) : transcript.map((entry) => {
+              const authorName = transcriptAuthorName(entry, agentById);
+              const isSystem = entry.authorKind === "system";
+              const collapseByDefault = shouldCollapseMeetingTranscriptEntry(entry);
+              return (
+                <div key={`${entry.entryKind}:${entry.sourceCommentId ?? entry.createdAt.toString()}`} className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{authorName}</span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]">
+                      {transcriptEntryLabel(entry)}
+                    </span>
+                    {entry.roundNumber ? (
+                      <span>
+                        R{entry.roundNumber} · {formatMeetingRoundKindLabel(entry.roundKind)}
+                      </span>
+                    ) : null}
+                    <span>{formatDateTime(entry.createdAt)}</span>
+                  </div>
+                  {collapseByDefault ? (
+                    <Collapsible className="rounded-[18px] border border-border bg-card text-foreground" defaultOpen={false}>
+                      <div className="flex flex-col gap-3 px-4 py-3">
+                        <div className="text-sm text-muted-foreground">
+                          {summarizeMeetingTranscriptEntry(entry)}
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs text-muted-foreground">
+                            CEO/CTO/CMO 원문을 다시 길게 반복하지 않도록 기본 접힘 상태로 보여줍니다.
+                          </div>
+                          <CollapsibleTrigger asChild>
+                            <Button type="button" size="sm" variant="outline">
+                              자세히 보기
+                            </Button>
+                          </CollapsibleTrigger>
+                        </div>
+                        <CollapsibleContent className="pt-1">
+                          <div className="rounded-[16px] border border-border/80 bg-background/60 px-4 py-3 text-sm">
+                            <MarkdownBody className="text-sm">{entry.body}</MarkdownBody>
+                          </div>
+                        </CollapsibleContent>
+                      </div>
+                    </Collapsible>
+                  ) : (
+                    <div
+                      className={cn(
+                        "rounded-[18px] border px-4 py-3 text-sm",
+                        isSystem
+                          ? "border-border bg-card text-foreground"
+                          : "border-cyan-400/20 bg-cyan-400/10 text-foreground",
+                      )}
+                    >
+                      <MarkdownBody className="text-sm">{entry.body}</MarkdownBody>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div className="rounded-xl border border-border bg-card/70 p-3">
               <div className="text-sm font-semibold text-foreground">운영자 코멘트</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                여기에 남긴 코멘트는 transcript에 보이고, 이후 재촉·다음 라운드·최종 요약 요청 시 프롬프트에도 함께 반영됩니다.
+                방금 읽은 회의 글 아래에서 바로 답글처럼 남길 수 있습니다. 저장된 코멘트는 transcript에 보이고, 이후 재촉·다음 라운드·최종 요약 요청 시 프롬프트에도 함께 반영됩니다.
               </p>
               <Textarea
                 value={operatorCommentBody}
                 onChange={(event) => setOperatorCommentBody(event.target.value)}
                 className="mt-3 min-h-[110px]"
                 rows={compact ? 4 : 5}
-                placeholder="예: CEO 의견 쪽에 더 공감해. 다만 신뢰 페이지뿐 아니라 실제 연락처, 운영주체, 카테고리 정리를 같이 보강하는 방향으로 다시 토론해줘."
+                placeholder="예: CTO 의견에는 동의해. 다만 너무 느리게 가지 말고 첫 2주는 최소 공개 리듬도 같이 제안해줘."
                 disabled={!canComposeOperatorComment || operatorCommentMutation.isPending}
               />
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -338,40 +401,6 @@ export function MeetingRoomPanel({
                 </Button>
               </div>
             </div>
-            {transcript.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                {transcriptEmptyMessage}
-              </div>
-            ) : transcript.map((entry) => {
-              const authorName = transcriptAuthorName(entry, agentById);
-              const isSystem = entry.authorKind === "system";
-              return (
-                <div key={`${entry.entryKind}:${entry.sourceCommentId ?? entry.createdAt.toString()}`} className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{authorName}</span>
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]">
-                      {transcriptEntryLabel(entry)}
-                    </span>
-                    {entry.roundNumber ? (
-                      <span>
-                        R{entry.roundNumber} · {formatMeetingRoundKindLabel(entry.roundKind)}
-                      </span>
-                    ) : null}
-                    <span>{formatDateTime(entry.createdAt)}</span>
-                  </div>
-                  <div
-                    className={cn(
-                      "rounded-[18px] border px-4 py-3 text-sm",
-                      isSystem
-                        ? "border-border bg-card text-foreground"
-                        : "border-cyan-400/20 bg-cyan-400/10 text-foreground",
-                    )}
-                  >
-                    <MarkdownBody className="text-sm">{entry.body}</MarkdownBody>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
 
