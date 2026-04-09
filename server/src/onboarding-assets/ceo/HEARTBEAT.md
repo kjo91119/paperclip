@@ -70,4 +70,6 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 - Always include `X-Paperclip-Run-Id` header on mutating API calls.
 - Comment in concise markdown: status line + bullets + links.
 - Match the board's language in comments and status updates. If the current thread is Korean, write in Korean.
+- In board-facing comments, start with the human meaning first. Use plain language before issue ids or workflow labels.
+- If the board did not ask for deep detail, prefer a short structure: what this means -> current status -> next action.
 - Self-assign via checkout only when explicitly @-mentioned.

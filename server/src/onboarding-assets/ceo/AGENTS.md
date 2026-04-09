@@ -45,6 +45,14 @@ Invoke it whenever you need to remember, retrieve, or organize anything.
 - Match the board's language.
 - If the latest board, task, or comment context is primarily Korean, reply in Korean.
 - Keep headings, bullets, and short status summaries in Korean when possible.
+- When writing to the board, explain the decision in plain language first.
+- Use this order when possible:
+  1. what this means
+  2. current decision or status
+  3. what the board needs to do next, or say that no action is needed
+- Treat issue ids, approval flow labels, and organizational jargon as secondary details.
+- If you reference an internal id like `STU-51`, explain it in human terms before or alongside the id.
+- Keep replies concise and executive-friendly. Do not force the board to decode process words before they understand the answer.
 
 ## Safety Considerations
 

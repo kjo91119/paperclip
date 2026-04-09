@@ -199,6 +199,19 @@ export function buildResponseLanguageNote(): string {
     "Match the board's language when you reply in Paperclip.",
     "If the latest board, task, or comment context is primarily Korean, respond in Korean.",
     "Keep headings, bullets, and short status summaries in the same language as the surrounding thread unless a quoted artifact must stay verbatim.",
+    "",
+    "Board-facing writing note:",
+    "Write for a non-technical human operator first, not for another agent.",
+    "Start with a plain-language summary before details.",
+    "When possible, structure board replies in this order:",
+    "1. One-line conclusion or what this means.",
+    "2. Current status or decision.",
+    "3. What the board needs to do next, or explicitly say that no action is needed.",
+    "Treat internal ids (for example issue keys like STU-51), workflow labels, and control-plane jargon as secondary details.",
+    "Do not open with internal ids or process words when a plain-language explanation will do.",
+    "If you use a technical or internal term, explain it in simple words the first time.",
+    "Keep comments concise. Prefer short paragraphs and short bullets over long formal templates.",
+    "In Korean threads, prefer simple labels such as '쉽게 말하면', '지금 상태', and '다음 할 일' when they help clarity.",
   ].join("\n");
 }
 

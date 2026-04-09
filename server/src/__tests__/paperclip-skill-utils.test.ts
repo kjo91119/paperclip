@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  buildResponseLanguageNote,
   listPaperclipSkillEntries,
   removeMaintainerOnlySkillSymlinks,
 } from "@paperclipai/adapter-utils/server-utils";
@@ -58,5 +59,14 @@ describe("paperclip skill utils", () => {
     await expect(fs.lstat(path.join(skillsHome, "release"))).rejects.toThrow();
     expect((await fs.lstat(path.join(skillsHome, "paperclip"))).isSymbolicLink()).toBe(true);
     expect((await fs.lstat(path.join(skillsHome, "release-notes"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("includes plain-language board reply guidance in the shared response note", () => {
+    const note = buildResponseLanguageNote();
+
+    expect(note).toContain("Write for a non-technical human operator first");
+    expect(note).toContain("Start with a plain-language summary before details.");
+    expect(note).toContain("What the board needs to do next");
+    expect(note).toContain("쉽게 말하면");
   });
 });
