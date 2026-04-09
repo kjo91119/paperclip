@@ -74,7 +74,7 @@ export function IssueRow({
               <span className="hidden shrink-0 sm:inline-flex">
                 <StatusIcon status={issue.status} className={selectedStatusClass} />
               </span>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              <span className="shrink-0 font-mono text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                 {identifier}
               </span>
             </>

@@ -71,7 +71,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide flex flex-col gap-4 px-3 py-2">
-        <div className="flex flex-col gap-0.5">
+        <SidebarSection label="지금 할 일">
           {/* New Issue button aligned with nav items */}
           <button
             onClick={() => openNewIssue()}
@@ -80,8 +80,6 @@ export function Sidebar() {
             <SquarePen className="h-4 w-4 shrink-0" />
             <span className="truncate">새 이슈</span>
           </button>
-          <SidebarNavItem to="/dashboard" label="대시보드" icon={LayoutDashboard} liveCount={liveRunCount} />
-          <SidebarNavItem to="/office" label="오피스" icon={PanelsTopLeft} />
           <SidebarNavItem
             to="/inbox"
             label="받은 편지함"
@@ -90,6 +88,8 @@ export function Sidebar() {
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
           />
+          <SidebarNavItem to="/office" label="오피스" icon={PanelsTopLeft} />
+          <SidebarNavItem to="/dashboard" label="대시보드" icon={LayoutDashboard} liveCount={liveRunCount} />
           <PluginSlotOutlet
             slotTypes={["sidebar"]}
             context={pluginContext}
@@ -97,9 +97,9 @@ export function Sidebar() {
             itemClassName="text-[13px] font-medium"
             missingBehavior="placeholder"
           />
-        </div>
+        </SidebarSection>
 
-        <SidebarSection label="작업">
+        <SidebarSection label="작업 관리">
           <SidebarNavItem to="/issues" label="이슈" icon={CircleDot} />
           <SidebarNavItem to="/routines" label="루틴" icon={Repeat} textBadge="베타" textBadgeTone="amber" />
           <SidebarNavItem to="/goals" label="목표" icon={Target} />
@@ -109,7 +109,7 @@ export function Sidebar() {
 
         <SidebarAgents />
 
-        <SidebarSection label="회사">
+        <SidebarSection label="조직 설정">
           <SidebarNavItem to="/org" label="조직" icon={Network} />
           <SidebarNavItem to="/skills" label="기술" icon={Boxes} />
           <SidebarNavItem to="/costs" label="비용" icon={DollarSign} />

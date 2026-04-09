@@ -1668,7 +1668,7 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     ]);
   });
 
-  it("completes the meeting when the summarizer responds", async () => {
+  it("keeps the meeting open after summary response until the operator finalizes it", async () => {
     const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
     const created = await svc.createMeeting({
       companyId,
@@ -1783,7 +1783,40 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       },
     });
 
-    const meeting = await db
+    let meeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, created!.meeting.id))
+      .then((rows) => rows[0] ?? null);
+    expect(meeting?.status).toBe("awaiting_operator");
+    expect(meeting?.completedAt).toBeNull();
+
+    let rootIssue = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, created!.rootIssue.id))
+      .then((rows) => rows[0] ?? null);
+    expect(rootIssue?.status).toBe("blocked");
+
+    let rootComments = await db
+      .select({ systemCommentKind: issueComments.systemCommentKind })
+      .from(issueComments)
+      .where(eq(issueComments.issueId, created!.rootIssue.id));
+    expect(rootComments.filter((comment) => comment.systemCommentKind === "meeting_completed")).toHaveLength(0);
+
+    let dto = await svc.getById(created!.meeting.id);
+    expect(dto?.transcript.some((entry) => entry.entryKind === "final_summary" && entry.body.includes("권장 결론"))).toBe(true);
+    expect(dto?.transcript.at(-1)?.entryKind).toBe("operator_signal");
+
+    const finalized = await svc.finalizeMeetingByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+    expect(finalized?.meeting.status).toBe("completed");
+
+    meeting = await db
       .select()
       .from(issueMeetings)
       .where(eq(issueMeetings.id, created!.meeting.id))
@@ -1791,20 +1824,20 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     expect(meeting?.status).toBe("completed");
     expect(meeting?.completedAt).not.toBeNull();
 
-    const rootIssue = await db
+    rootIssue = await db
       .select()
       .from(issues)
       .where(eq(issues.id, created!.rootIssue.id))
       .then((rows) => rows[0] ?? null);
     expect(rootIssue?.status).toBe("done");
 
-    const rootComments = await db
+    rootComments = await db
       .select({ systemCommentKind: issueComments.systemCommentKind })
       .from(issueComments)
       .where(eq(issueComments.issueId, created!.rootIssue.id));
     expect(rootComments.filter((comment) => comment.systemCommentKind === "meeting_completed")).toHaveLength(1);
 
-    const dto = await svc.getById(created!.meeting.id);
+    dto = await svc.getById(created!.meeting.id);
     expect(dto?.transcript.some((entry) => entry.entryKind === "final_summary" && entry.body.includes("권장 결론"))).toBe(true);
     expect(dto?.transcript.at(-1)?.entryKind).toBe("meeting_completed");
 
@@ -1815,7 +1848,7 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
     expect(completionActivity).toHaveLength(1);
   });
 
-  it("marks final status as partial_completed after skipped participants", async () => {
+  it("marks final status as partial_completed only when the operator finalizes after skipped participants", async () => {
     const { companyId, ceoId, ctoId } = await seedCompanyWithAgents();
     const created = await svc.createMeeting({
       companyId,
@@ -1909,7 +1942,21 @@ describeEmbeddedPostgres("meetingService orchestration", () => {
       },
     });
 
-    const meeting = await db
+    let meeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, created!.meeting.id))
+      .then((rows) => rows[0] ?? null);
+    expect(meeting?.status).toBe("awaiting_operator");
+
+    await svc.finalizeMeetingByIssueId(created!.rootIssue.id, {
+      actorType: "user",
+      actorId: "board-user",
+      agentId: null,
+      runId: null,
+    });
+
+    meeting = await db
       .select()
       .from(issueMeetings)
       .where(eq(issueMeetings.id, created!.meeting.id))

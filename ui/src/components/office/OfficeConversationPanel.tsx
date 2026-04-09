@@ -208,12 +208,9 @@ export function OfficeConversationPanel({
     <section className="rounded-[30px] border border-border bg-card shadow-[0_24px_80px_rgba(0,0,0,0.14)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div className="space-y-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            AI Company Messenger
-          </div>
           <h2 className="text-sm font-semibold text-foreground">대화 패널</h2>
           <p className="max-w-3xl text-xs text-muted-foreground">
-            에이전트 DM은 이슈/댓글 스레드로, 전체회의는 orchestrated meeting room으로 렌더링합니다.
+            에이전트와 1:1 대화, 또는 여러 에이전트가 참여하는 전체회의를 진행할 수 있습니다.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -387,7 +384,7 @@ function ConversationSelectionCard({
           <div>
             <div className="text-sm font-semibold text-foreground">전체회의 준비</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              진행자와 참가자를 고르면 orchestrated 회의실을 만들고, 각 참가자는 내부 child issue로 라운드 응답을 진행합니다.
+              진행자와 참가자를 고르면 전체회의를 열고, 각 참가자가 라운드별로 의견을 제시합니다.
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-card px-3 py-3 text-sm text-foreground">
@@ -478,7 +475,7 @@ function ThreadList({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {mode === "meeting"
-            ? "orchestrated 회의실과 기존 legacy meeting thread를 함께 엽니다."
+            ? "진행 중이거나 완료된 회의를 여기서 확인할 수 있습니다."
             : "서로 다른 이슈의 댓글을 합치지 않고, 각 이슈를 독립된 대화로 취급합니다."}
         </p>
       </div>
@@ -503,19 +500,19 @@ function ThreadList({
                     className="block w-full pr-24 text-left"
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {issue.identifier ?? issue.id.slice(0, 8)}
-                      </span>
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                      <div className="line-clamp-2 text-sm font-medium">{issue.title}</div>
+                      <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
                         {formatStatusLabel(issue.status)}
                       </span>
                     </div>
-                    <div className="mt-2 line-clamp-2 text-sm font-medium">{issue.title}</div>
-                    <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                    <div className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">
                       {getOfficeConversationPreview(issue)}
                     </div>
-                    <div className="mt-2 text-[11px] text-muted-foreground">
-                      {relativeTime(issue.lastExternalCommentAt ?? issue.updatedAt)}
+                    <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span>{relativeTime(issue.lastExternalCommentAt ?? issue.updatedAt)}</span>
+                      {issue.identifier ? (
+                        <span className="font-mono opacity-40">{issue.identifier}</span>
+                      ) : null}
                     </div>
                   </button>
                   <Button
@@ -595,11 +592,11 @@ function ThreadHeader({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <button type="button" className="inline-flex items-center gap-1 text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-muted-foreground">
               <ChevronLeft className="h-3.5 w-3.5" />
-              현재 스레드
-            </button>
-            <span className="font-mono">{issue.identifier ?? issue.id.slice(0, 8)}</span>
+              선택된 대화
+            </span>
+            <span className="font-mono opacity-50 text-[11px]">{issue.identifier ?? issue.id.slice(0, 8)}</span>
             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.18em]">
               {formatStatusLabel(issue.status)}
             </span>
@@ -834,9 +831,9 @@ function OfficeComposer({
   return (
     <div className="rounded-[24px] border border-border bg-background/70">
       <div className="border-b border-border px-4 py-3">
-        <div className="text-sm font-semibold text-foreground">메시지 컴포저</div>
+        <div className="text-sm font-semibold text-foreground">메시지 작성</div>
         <p className="mt-1 text-xs text-muted-foreground">
-          현재 스레드에 이어서 말하거나, 필요하면 새 {mode === "meeting" ? "회의 이슈" : "이슈"}를 만들 수 있습니다.
+          선택된 대화에 이어서 말하거나, 필요하면 새 {mode === "meeting" ? "회의 이슈" : "이슈"}를 만들 수 있습니다.
         </p>
       </div>
 

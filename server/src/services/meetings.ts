@@ -168,8 +168,18 @@ function childIssueTitle(agentName: string, agenda: string) {
   return `[회의][${agentName}] ${compact.slice(0, 96)} 응답`;
 }
 
-function roundOpenedBody(input: { roundNumber: number; agenda: string }) {
-  const stageLabel = input.roundNumber === 1 ? "1차 의견 수집" : `${input.roundNumber}차 토론`;
+function roundOpenedBody(input: {
+  roundNumber: number;
+  roundKind: MeetingRoomDTO["rounds"][number]["kind"];
+  agenda: string;
+}) {
+  const stageLabel = input.roundKind === "opening"
+    ? "1차 의견 수집"
+    : input.roundKind === "discussion"
+      ? `${input.roundNumber}차 토론`
+      : input.roundKind === "followup"
+        ? `${input.roundNumber}차 추가 토론`
+        : `${input.roundNumber}차 최종 요약`;
   return [
     `라운드 ${input.roundNumber} 시작`,
     "",
@@ -404,6 +414,14 @@ function meetingCompletedBody(input: { status: "completed" | "partial_completed"
     "전체회의가 완료되었습니다.",
     "",
     "최종 요약과 실행안을 확인해 주세요.",
+  ].join("\n");
+}
+
+function summaryReadyBody(input: { roundNumber: number }) {
+  return [
+    `라운드 ${input.roundNumber} 최종 요약이 준비되었습니다.`,
+    "",
+    "요약 결론과 남은 리스크를 검토한 뒤 회의를 종료하거나, 더 논의가 필요하면 전원 재토론을 다시 여세요.",
   ].join("\n");
 }
 
@@ -1721,7 +1739,11 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       const roundOpenComment = round.roundOpenRootCommentId
         ? { id: round.roundOpenRootCommentId }
         : await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
-          body: roundOpenedBody({ roundNumber: round.roundNumber, agenda: meeting.agenda }),
+          body: roundOpenedBody({
+            roundNumber: round.roundNumber,
+            roundKind: round.kind as MeetingRoomDTO["rounds"][number]["kind"],
+            agenda: meeting.agenda,
+          }),
           systemKey: MEETING_SYSTEM_AUTHOR_KEY,
           systemCommentKind: "round_opened",
         });
@@ -1966,7 +1988,11 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         createdNewRound = true;
 
         const roundOpenComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
-          body: roundOpenedBody({ roundNumber: insertedRound.roundNumber, agenda: meeting.agenda }),
+          body: roundOpenedBody({
+            roundNumber: insertedRound.roundNumber,
+            roundKind: insertedRound.kind as MeetingRoomDTO["rounds"][number]["kind"],
+            agenda: meeting.agenda,
+          }),
           systemKey: MEETING_SYSTEM_AUTHOR_KEY,
           systemCommentKind: "round_opened",
         });
@@ -2123,11 +2149,8 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       return false;
     }
 
-    const finalStatus = await deriveFinalMeetingStatus(meeting.id);
-
     const completed = await db.transaction(async (tx) => {
       const issueSvcTx = issueService(db);
-      const activeChildIssueIds = await loadActiveParticipantChildIssueIds(tx, meeting.id);
       const [claimedRound] = await tx
         .update(issueMeetingRounds)
         .set({
@@ -2142,7 +2165,104 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         return null;
       }
 
-      const meetingCompletedComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
+      const summaryReadyComment = await issueSvcTx.addCommentInTx(tx, meeting.rootIssueId, {
+        body: summaryReadyBody({ roundNumber: round.roundNumber }),
+        systemKey: MEETING_SYSTEM_AUTHOR_KEY,
+        systemCommentKind: "operator_attention",
+      });
+
+      await tx
+        .update(issueMeetings)
+        .set({
+          status: "awaiting_operator",
+          completedAt: null,
+          lastOperatorSignalCommentId: summaryReadyComment.id,
+          lastRoundCompletedAt: now(),
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(eq(issueMeetings.id, meeting.id));
+
+      await syncRootIssueStatusMirror(tx, {
+        rootIssueId: meeting.rootIssueId,
+        meetingStatus: "awaiting_operator",
+      });
+
+      return { summaryCommentId: summaryParticipant.responseCommentId };
+    });
+
+    if (!completed) return false;
+
+    await logMeetingActivity(actor, meeting.companyId, meeting.id, "meeting.round_completed", {
+      roundId: round.id,
+      roundNumber: round.roundNumber,
+      summaryAgentId: summaryParticipant.agentId,
+      summaryCommentId: completed.summaryCommentId,
+    });
+
+    return true;
+  }
+
+  async function finalizeMeetingByIssueId(issueId: string, actor: MeetingActor) {
+    const meeting = await findMeetingByIssueId(issueId);
+    if (!meeting) throw notFound("Meeting not found");
+
+    await refreshMeetingState(meeting.id);
+    const freshMeeting = await db
+      .select()
+      .from(issueMeetings)
+      .where(eq(issueMeetings.id, meeting.id))
+      .then((rows) => rows[0] ?? null);
+    if (!freshMeeting) throw notFound("Meeting not found");
+    if (freshMeeting.status !== "awaiting_operator") {
+      throw unprocessable("Meeting can only be finalized from awaiting_operator");
+    }
+
+    const currentRound = await getCurrentRound(freshMeeting.id, freshMeeting.currentRoundNumber);
+    if (!currentRound) throw notFound("Current meeting round not found");
+    if (currentRound.kind !== "summary" || currentRound.status !== "completed") {
+      throw unprocessable("Meeting finalize is only allowed when the summary round is completed");
+    }
+
+    const summaryParticipant = await db
+      .select({
+        agentId: issueMeetingRoundParticipants.agentId,
+        responseCommentId: issueMeetingRoundParticipants.responseCommentId,
+      })
+      .from(issueMeetingRoundParticipants)
+      .where(
+        and(
+          eq(issueMeetingRoundParticipants.roundId, currentRound.id),
+          eq(issueMeetingRoundParticipants.status, "responded"),
+          isNotNull(issueMeetingRoundParticipants.responseCommentId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+    if (!summaryParticipant?.responseCommentId) {
+      throw unprocessable("Meeting finalize requires a completed summary response");
+    }
+
+    const finalStatus = await deriveFinalMeetingStatus(freshMeeting.id);
+    const finalized = await db.transaction(async (tx) => {
+      const issueSvcTx = issueService(db);
+      const activeChildIssueIds = await loadActiveParticipantChildIssueIds(tx, freshMeeting.id);
+      const [claimedMeeting] = await tx
+        .update(issueMeetings)
+        .set({
+          status: finalStatus,
+          completedAt: now(),
+          lastRoundCompletedAt: freshMeeting.lastRoundCompletedAt ?? now(),
+          updatedAt: now(),
+          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
+        })
+        .where(and(eq(issueMeetings.id, freshMeeting.id), eq(issueMeetings.status, "awaiting_operator")))
+        .returning({ id: issueMeetings.id });
+      if (!claimedMeeting) {
+        return null;
+      }
+
+      const meetingCompletedComment = await issueSvcTx.addCommentInTx(tx, freshMeeting.rootIssueId, {
         body: meetingCompletedBody({ status: finalStatus }),
         systemKey: MEETING_SYSTEM_AUTHOR_KEY,
         systemCommentKind: "meeting_completed",
@@ -2151,14 +2271,10 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
       await tx
         .update(issueMeetings)
         .set({
-          status: finalStatus,
-          completedAt: now(),
           lastOperatorSignalCommentId: meetingCompletedComment.id,
-          lastRoundCompletedAt: now(),
           updatedAt: now(),
-          transitionVersion: sql`${issueMeetings.transitionVersion} + 1`,
         })
-        .where(eq(issueMeetings.id, meeting.id));
+        .where(eq(issueMeetings.id, freshMeeting.id));
 
       await tx
         .update(issues)
@@ -2166,31 +2282,27 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
           status: "done",
           updatedAt: now(),
         })
-        .where(
-          inArray(
-            issues.id,
-            activeChildIssueIds,
-          ),
-        );
+        .where(inArray(issues.id, activeChildIssueIds));
 
       await syncRootIssueStatusMirror(tx, {
-        rootIssueId: meeting.rootIssueId,
+        rootIssueId: freshMeeting.rootIssueId,
         meetingStatus: finalStatus,
       });
 
       return { finalStatus, commentId: meetingCompletedComment.id };
     });
+    if (!finalized) {
+      throw conflict("Meeting finalize was already processed");
+    }
 
-    if (!completed) return false;
-
-    await logMeetingActivity(actor, meeting.companyId, meeting.id, `meeting.${completed.finalStatus}`, {
-      roundId: round.id,
-      roundNumber: round.roundNumber,
+    await logMeetingActivity(actor, freshMeeting.companyId, freshMeeting.id, `meeting.${finalized.finalStatus}`, {
+      roundId: currentRound.id,
+      roundNumber: currentRound.roundNumber,
       summaryAgentId: summaryParticipant.agentId,
       summaryCommentId: summaryParticipant.responseCommentId,
     });
 
-    return true;
+    return getById(freshMeeting.id);
   }
 
   async function maybeAdvanceRoundAfterResponse(meetingId: string, actor: MeetingActor) {
@@ -2732,7 +2844,11 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         .returning();
 
       const roundOpenComment = await issueSvcTx.addCommentInTx(tx, freshMeeting.rootIssueId, {
-        body: roundOpenedBody({ roundNumber: nextRound.roundNumber, agenda: freshMeeting.agenda }),
+        body: roundOpenedBody({
+          roundNumber: nextRound.roundNumber,
+          roundKind: nextRound.kind as MeetingRoomDTO["rounds"][number]["kind"],
+          agenda: freshMeeting.agenda,
+        }),
         systemKey: MEETING_SYSTEM_AUTHOR_KEY,
         systemCommentKind: "round_opened",
       });
@@ -2807,7 +2923,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     if (currentRound.kind !== "summary") {
       throw unprocessable("Reopening discussion is only supported from a summary round");
     }
-    if (!["awaiting_operator", "timed_out", "failed"].includes(currentRound.status)) {
+    if (!["completed", "awaiting_operator", "timed_out", "failed"].includes(currentRound.status)) {
       throw unprocessable("Summary round is not ready to reopen discussion");
     }
 
@@ -2870,7 +2986,11 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
         .returning();
 
       const roundOpenComment = await issueSvcTx.addCommentInTx(tx, freshMeeting.rootIssueId, {
-        body: roundOpenedBody({ roundNumber: nextRound.roundNumber, agenda: freshMeeting.agenda }),
+        body: roundOpenedBody({
+          roundNumber: nextRound.roundNumber,
+          roundKind: nextRound.kind as MeetingRoomDTO["rounds"][number]["kind"],
+          agenda: freshMeeting.agenda,
+        }),
         systemKey: MEETING_SYSTEM_AUTHOR_KEY,
         systemCommentKind: "round_opened",
       });
@@ -3138,6 +3258,7 @@ export function meetingService(db: Db, deps: MeetingServiceDeps = {}) {
     archiveMeetingByIssueId,
     createMeeting,
     continueMeetingByIssueId,
+    finalizeMeetingByIssueId,
     getById,
     getByIssueId,
     onIssueCommentAdded,

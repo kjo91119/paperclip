@@ -522,7 +522,7 @@ export function AgentDetail() {
     tab?: string;
     runId?: string;
   }>();
-  const { companies, selectedCompanyId, setSelectedCompanyId } = useCompany();
+  const { companies, selectedCompanyId, setSelectedCompanyId, loading: companiesLoading } = useCompany();
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -547,6 +547,7 @@ export function AgentDetail() {
   }, [companies, companyPrefix]);
   const lookupCompanyId = routeCompanyId ?? selectedCompanyId ?? undefined;
   const canFetchAgent = routeAgentRef.length > 0 && (isUuidLike(routeAgentRef) || Boolean(lookupCompanyId));
+  const waitingForCompanyScope = routeAgentRef.length > 0 && !isUuidLike(routeAgentRef) && !lookupCompanyId && companiesLoading;
   const setSaveConfigAction = useCallback((fn: (() => void) | null) => { saveConfigActionRef.current = fn; }, []);
   const setCancelConfigAction = useCallback((fn: (() => void) | null) => { cancelConfigActionRef.current = fn; }, []);
 
@@ -794,9 +795,22 @@ export function AgentDetail() {
     }, [configDirty]),
   );
 
-  if (isLoading) return <PageSkeleton variant="detail" />;
+  if (isLoading || waitingForCompanyScope) return <PageSkeleton variant="detail" />;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
-  if (!agent) return null;
+  if (!canFetchAgent) {
+    return (
+      <div className="rounded-xl border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        에이전트 컨텍스트를 아직 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.
+      </div>
+    );
+  }
+  if (!agent) {
+    return (
+      <div className="rounded-xl border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        요청한 에이전트를 찾지 못했습니다.
+      </div>
+    );
+  }
   if (!urlRunId && !urlTab) {
     return <Navigate to={`/agents/${canonicalAgentRef}/dashboard`} replace />;
   }

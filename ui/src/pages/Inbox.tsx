@@ -1295,13 +1295,16 @@ export function Inbox() {
             items={[
               {
                 value: "mine",
-                label: "내 것",
+                label: "지금 확인할 것",
+              },
+              {
+                value: "unread",
+                label: "안 읽음",
               },
               {
                 value: "recent",
-                label: "최근",
+                label: "최근 활동",
               },
-              { value: "unread", label: "안 읽음" },
               { value: "all", label: "전체" },
             ]}
           />
@@ -1385,12 +1388,12 @@ export function Inbox() {
           icon={InboxIcon}
           message={
             tab === "mine"
-              ? "받은 편지함이 비어 있습니다."
+              ? "지금 확인할 것이 없습니다. 새 항목이 생기면 여기에 나타납니다."
               : tab === "unread"
-              ? "새 받은 편지함 항목이 없습니다."
+              ? "읽지 않은 항목이 없습니다."
               : tab === "recent"
-                ? "최근 받은 편지함 항목이 없습니다."
-                : "필터에 맞는 받은 편지함 항목이 없습니다."
+                ? "최근 활동 내역이 없습니다."
+                : "필터에 맞는 항목이 없습니다."
           }
         />
       )}

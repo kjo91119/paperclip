@@ -5,12 +5,15 @@ import type { MeetingRoomDTO } from "@paperclipai/shared";
 import {
   canAddOperatorComment,
   canContinueMeeting,
+  canFinalizeMeeting,
   canPauseMeeting,
   canReopenDiscussion,
   canRemindMeetingParticipant,
   canRequestMeetingSummary,
   canResumeMeeting,
   canSkipMeetingParticipant,
+  continueMeetingLabel,
+  describeMeetingOverview,
   describeMeetingStatus,
   estimateMeetingExecution,
   formatMeetingDurationLabel,
@@ -19,6 +22,8 @@ import {
   formatMeetingStatusLabel,
   meetingGuardrailNotes,
   shouldCollapseMeetingTranscriptEntry,
+  shouldAutoCollapseCurrentRoundPanel,
+  summarizeCurrentRoundPanel,
   summarizeMeetingTranscriptEntry,
 } from "./meeting-room";
 
@@ -99,6 +104,7 @@ describe("meeting room helpers", () => {
   it("computes high-level control visibility", () => {
     const awaiting = createMeetingRoom();
     expect(canContinueMeeting(awaiting)).toBe(true);
+    expect(continueMeetingLabel(awaiting)).toBe("최종 요약으로 진행");
     expect(canAddOperatorComment(awaiting)).toBe(true);
     expect(canPauseMeeting(awaiting)).toBe(true);
     expect(canResumeMeeting(awaiting)).toBe(false);
@@ -173,9 +179,26 @@ describe("meeting room helpers", () => {
         ...createMeetingRoom().meeting,
         status: "awaiting_operator",
         currentRoundKind: "summary",
+        currentRoundNumber: 3,
       },
+      rounds: [
+        {
+          id: "round-3",
+          roundNumber: 3,
+          kind: "summary",
+          status: "completed",
+          deadlineAt: null,
+          completedAt: new Date("2026-04-07T00:05:00.000Z"),
+        },
+      ],
     });
     expect(canReopenDiscussion(summaryRoom)).toBe(true);
+    expect(canFinalizeMeeting(summaryRoom)).toBe(true);
+    expect(describeMeetingStatus(summaryRoom)).toEqual({
+      tone: "warning",
+      title: "최종 요약이 준비되었습니다",
+      body: "요약 결론을 검토한 뒤 회의를 종료하거나, 더 논의가 필요하면 전원 재토론을 다시 여세요.",
+    });
 
     const discussionRoom = createMeetingRoom({
       meeting: {
@@ -185,6 +208,7 @@ describe("meeting room helpers", () => {
       },
     });
     expect(canReopenDiscussion(discussionRoom)).toBe(false);
+    expect(canFinalizeMeeting(discussionRoom)).toBe(false);
   });
 
   it("produces guardrail notes and status copy for edge states", () => {
@@ -234,6 +258,90 @@ describe("meeting room helpers", () => {
 
     const entry = room.transcript[0]!;
     expect(shouldCollapseMeetingTranscriptEntry(entry)).toBe(true);
-    expect(summarizeMeetingTranscriptEntry(entry)).toBe("라운드 1 요약 · 응답 3건 · 기본 접힘");
+    expect(summarizeMeetingTranscriptEntry(entry)).toBe("라운드 1 정리 · 응답 3건");
+  });
+
+  it("builds a plain-language meeting overview for final-summary-ready meetings", () => {
+    const room = createMeetingRoom({
+      meeting: {
+        ...createMeetingRoom().meeting,
+        status: "awaiting_operator",
+        currentRoundKind: "summary",
+        currentRoundNumber: 3,
+        summaryAgentId: "agent-1",
+      },
+      rounds: [
+        {
+          id: "round-3",
+          roundNumber: 3,
+          kind: "summary",
+          status: "completed",
+          deadlineAt: null,
+          completedAt: new Date("2026-04-07T00:10:00.000Z"),
+        },
+      ],
+      transcript: [
+        {
+          entryKind: "final_summary",
+          roundNumber: 3,
+          roundKind: "summary",
+          participantAgentId: "agent-1",
+          sourceIssueId: "child-1",
+          sourceCommentId: "comment-final",
+          authorKind: "agent",
+          systemCommentKind: null,
+          body: "최종 결론\n직원 2명으로 먼저 운영하고 2주 뒤 확장을 다시 판단합니다.",
+          createdAt: new Date("2026-04-07T00:10:00.000Z"),
+          respondedAt: null,
+          speakingOrder: null,
+        },
+      ],
+    });
+
+    expect(describeMeetingOverview(room)).toEqual({
+      conclusion: "직원 2명으로 먼저 운영하고 2주 뒤 확장을 다시 판단합니다.",
+      currentDecision: "최종 요약은 준비됐고, 회의는 아직 닫히지 않았습니다.",
+      nextAction: "요약을 확인한 뒤 회의를 종료하거나, 더 논의가 필요하면 전원 재토론을 여세요.",
+      ownerKind: "summary_agent",
+      ownerAgentIds: ["agent-1"],
+    });
+  });
+
+  it("summarizes and auto-collapses the current-round panel when everyone answered", () => {
+    const room = createMeetingRoom({
+      currentRoundParticipants: [
+        {
+          id: "rp-1",
+          participantId: "participant-1",
+          agentId: "agent-1",
+          childIssueId: "child-1",
+          speakingOrder: 0,
+          status: "responded",
+          remindedCount: 0,
+          deadlineAt: null,
+          respondedAt: new Date("2026-04-07T00:03:00.000Z"),
+          skipReason: null,
+          failureReason: null,
+          lastErrorCode: null,
+        },
+        {
+          id: "rp-2",
+          participantId: "participant-2",
+          agentId: "agent-2",
+          childIssueId: "child-2",
+          speakingOrder: 1,
+          status: "responded",
+          remindedCount: 0,
+          deadlineAt: null,
+          respondedAt: new Date("2026-04-07T00:04:00.000Z"),
+          skipReason: null,
+          failureReason: null,
+          lastErrorCode: null,
+        },
+      ],
+    });
+
+    expect(summarizeCurrentRoundPanel(room)).toBe("모두 응답했습니다 (2/2)");
+    expect(shouldAutoCollapseCurrentRoundPanel(room)).toBe(true);
   });
 });

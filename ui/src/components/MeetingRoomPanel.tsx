@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { Agent, Issue, MeetingCurrentRoundParticipantSummary, MeetingRoomDTO } from "@paperclipai/shared";
 import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  PanelRight,
   Pause,
   Play,
   RotateCcw,
@@ -19,12 +20,15 @@ import {
   canAddOperatorComment,
   canStartMeeting,
   canContinueMeeting,
+  canFinalizeMeeting,
   canPauseMeeting,
   canReopenDiscussion,
   canRemindMeetingParticipant,
   canRequestMeetingSummary,
   canResumeMeeting,
   canSkipMeetingParticipant,
+  continueMeetingLabel,
+  describeMeetingOverview,
   describeMeetingStatus,
   estimateMeetingExecution,
   formatMeetingDurationLabel,
@@ -33,6 +37,8 @@ import {
   formatMeetingStatusLabel,
   meetingGuardrailNotes,
   shouldCollapseMeetingTranscriptEntry,
+  shouldAutoCollapseCurrentRoundPanel,
+  summarizeCurrentRoundPanel,
   summarizeMeetingTranscriptEntry,
 } from "../lib/meeting-room";
 import { cn, formatDateTime, relativeTime } from "../lib/utils";
@@ -47,6 +53,7 @@ type MeetingRoomAction =
   | { kind: "pause" }
   | { kind: "resume" }
   | { kind: "continue" }
+  | { kind: "finalize" }
   | { kind: "reopen_discussion" }
   | { kind: "summary" }
   | { kind: "remind"; agentId: string }
@@ -54,12 +61,12 @@ type MeetingRoomAction =
 
 function transcriptEntryLabel(entry: MeetingRoomDTO["transcript"][number]) {
   if (entry.entryKind === "round_opened") return "라운드 시작";
-  if (entry.entryKind === "round_summary") return "라운드 요약";
-  if (entry.entryKind === "final_summary") return "최종 요약";
-  if (entry.entryKind === "meeting_completed") return "회의 종료";
-  if (entry.entryKind === "operator_comment") return "운영자 코멘트";
-  if (entry.entryKind === "operator_signal") return "운영자 신호";
-  if (entry.entryKind === "late_response") return "지연 응답";
+  if (entry.entryKind === "round_summary") return "라운드 정리";
+  if (entry.entryKind === "final_summary") return "최종 정리";
+  if (entry.entryKind === "meeting_completed") return "회의 완료";
+  if (entry.entryKind === "operator_comment") return "내 의견";
+  if (entry.entryKind === "operator_signal") return "진행 안내";
+  if (entry.entryKind === "late_response") return "뒤늦은 응답";
   if (entry.entryKind === "participant_response_extra") return "추가 의견";
   return "응답";
 }
@@ -69,7 +76,7 @@ function transcriptAuthorName(
   agentById: Map<string, Agent>,
 ) {
   if (entry.authorKind === "system") return "시스템";
-  if (entry.authorKind === "user") return "운영자";
+  if (entry.authorKind === "user") return "나";
   if (entry.participantAgentId) return agentById.get(entry.participantAgentId)?.name ?? "에이전트";
   return "에이전트";
 }
@@ -79,6 +86,7 @@ function controlActionLabel(action: MeetingRoomAction["kind"]) {
   if (action === "pause") return "회의 일시중지";
   if (action === "resume") return "회의 재개";
   if (action === "continue") return "다음 라운드 진행";
+  if (action === "finalize") return "회의 종료";
   if (action === "reopen_discussion") return "전원 재토론";
   if (action === "summary") return "최종 요약 요청";
   if (action === "remind") return "참가자 재촉";
@@ -99,6 +107,38 @@ function statusNoticeIcon(tone: ReturnType<typeof describeMeetingStatus>["tone"]
   return <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />;
 }
 
+function formatMeetingOverviewOwner(
+  room: MeetingRoomDTO,
+  agentById: Map<string, Agent>,
+  ownerKind: ReturnType<typeof describeMeetingOverview>["ownerKind"],
+  ownerAgentIds: string[],
+) {
+  if (ownerKind === "operator") {
+    return "운영자";
+  }
+
+  const names = ownerAgentIds
+    .map((agentId) => agentById.get(agentId)?.name ?? agentId)
+    .filter((name, index, array) => array.indexOf(name) === index);
+
+  if (ownerKind === "summary_agent") {
+    if (names.length === 0) {
+      return "요약자";
+    }
+    return `요약자 ${names.join(", ")}`;
+  }
+
+  if (names.length === 0) {
+    return "현재 라운드 참가자";
+  }
+
+  if (names.length === 1) {
+    return `${names[0]} 응답 대기`;
+  }
+
+  return `${names[0]}, ${names[1]}${names.length > 2 ? ` 외 ${names.length - 2}명` : ""}`;
+}
+
 export function MeetingRoomPanel({
   issue,
   room,
@@ -113,6 +153,7 @@ export function MeetingRoomPanel({
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const [operatorCommentBody, setOperatorCommentBody] = useState("");
+  const finalSummaryRef = useRef<HTMLDivElement | null>(null);
   const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
   const statusNotice = describeMeetingStatus(room);
   const executionEstimate = estimateMeetingExecution(room);
@@ -122,6 +163,33 @@ export function MeetingRoomPanel({
     () => [...room.transcript].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
     [room.transcript],
   );
+
+  // 결론 카드: 완료 상태에서 final_summary 또는 meeting_completed 항목 추출
+  const finalSummaryEntry = useMemo(
+    () => transcript.find((e) => e.entryKind === "final_summary") ?? null,
+    [transcript],
+  );
+  const meetingCompletedEntry = useMemo(
+    () => transcript.find((e) => e.entryKind === "meeting_completed") ?? null,
+    [transcript],
+  );
+  const meetingOverview = useMemo(() => describeMeetingOverview(room), [room]);
+  const overviewOwner = useMemo(
+    () => formatMeetingOverviewOwner(room, agentById, meetingOverview.ownerKind, meetingOverview.ownerAgentIds),
+    [agentById, meetingOverview.ownerAgentIds, meetingOverview.ownerKind, room],
+  );
+  const roundPanelSummary = useMemo(() => summarizeCurrentRoundPanel(room), [room]);
+  const autoCollapseRoundPanel = useMemo(() => shouldAutoCollapseCurrentRoundPanel(room), [room]);
+  const [metaPanelOpen, setMetaPanelOpen] = useState(() => compact);
+  const [roundStatusOpen, setRoundStatusOpen] = useState(() => compact || !autoCollapseRoundPanel);
+
+  useEffect(() => {
+    setMetaPanelOpen(compact);
+  }, [compact, room.meeting.id]);
+
+  useEffect(() => {
+    setRoundStatusOpen(compact || !autoCollapseRoundPanel);
+  }, [autoCollapseRoundPanel, compact, room.meeting.currentRoundNumber, room.meeting.status]);
 
   const invalidateMeetingQueries = async () => {
     const issueRefs = [issue.id, issue.identifier].filter((value): value is string => Boolean(value));
@@ -152,6 +220,7 @@ export function MeetingRoomPanel({
       if (action.kind === "pause") return meetingsApi.pause(issue.id);
       if (action.kind === "resume") return meetingsApi.resume(issue.id);
       if (action.kind === "continue") return meetingsApi.continue(issue.id);
+      if (action.kind === "finalize") return meetingsApi.finalize(issue.id);
       if (action.kind === "reopen_discussion") return meetingsApi.reopenDiscussion(issue.id);
       if (action.kind === "summary") return meetingsApi.summary(issue.id);
       if (action.kind === "remind") return meetingsApi.remind(issue.id, action.agentId);
@@ -180,29 +249,29 @@ export function MeetingRoomPanel({
       setOperatorCommentBody("");
       await invalidateMeetingQueries();
       pushToast({
-        title: "운영자 코멘트 추가",
-        body: "회의 transcript와 다음 라운드 컨텍스트를 최신 상태로 갱신했습니다.",
+        title: "내 의견을 등록했습니다",
+        body: "회의 대화와 다음 라운드에 반영됩니다.",
         tone: "success",
       });
     },
     onError: (error) => {
       pushToast({
-        title: "운영자 코멘트 추가 실패",
-        body: error instanceof Error ? error.message : "회의 코멘트를 저장하지 못했습니다.",
+        title: "의견 등록 실패",
+        body: error instanceof Error ? error.message : "의견을 저장하지 못했습니다.",
         tone: "error",
       });
     },
   });
 
-  const compactClass = compact ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1.7fr)_18rem]";
+  const compactClass = compact || !metaPanelOpen ? "grid-cols-1" : "xl:grid-cols-[minmax(0,1.85fr)_16rem]";
   const transcriptEmptyMessage =
     room.meeting.status === "draft"
-      ? "아직 transcript가 없습니다. 회의를 시작하면 오프닝 라운드와 응답이 여기부터 쌓입니다."
+      ? "아직 대화 내용이 없습니다. 시작을 누르면 첫 라운드가 열리고 응답이 여기서부터 쌓입니다."
       : room.meeting.status === "paused"
-        ? "회의가 일시중지되어 새 transcript가 잠시 멈춘 상태입니다."
+        ? "회의가 일시중지되어 새 내용이 잠시 멈춘 상태입니다."
         : room.meeting.status === "failed"
-          ? "회의가 실패 상태라 transcript가 더 진행되지 않았습니다. 최근 운영자 신호를 먼저 확인하세요."
-          : "아직 표시할 회의 transcript가 없습니다.";
+          ? "회의가 실패 상태라 대화가 더 진행되지 않았습니다. 진행 안내 내역을 먼저 확인하세요."
+          : "아직 표시할 대화 내용이 없습니다.";
   const roundEmptyMessage =
     room.meeting.status === "draft"
       ? "회의를 시작하면 현재 라운드 참가자 상태가 채워집니다."
@@ -219,16 +288,16 @@ export function MeetingRoomPanel({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="font-mono">{issue.identifier ?? issue.id.slice(0, 8)}</span>
               <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
                 {formatMeetingStatusLabel(room.meeting.status)}
               </span>
               {room.meeting.needsAttention ? (
                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
                   <AlertTriangle className="h-3.5 w-3.5" />
-                  운영자 판단 필요
+                  확인이 필요합니다
                 </span>
               ) : null}
+              <span className="font-mono opacity-40">{issue.identifier ?? issue.id.slice(0, 8)}</span>
             </div>
             <div>
               <h3 className="text-base font-semibold text-foreground">{room.meeting.agenda}</h3>
@@ -272,7 +341,18 @@ export function MeetingRoomPanel({
                 disabled={controlMutation.isPending}
               >
                 <ChevronRight className="mr-1 h-3.5 w-3.5" />
-                다음 라운드
+                {continueMeetingLabel(room)}
+              </Button>
+            ) : null}
+            {canFinalizeMeeting(room) ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => controlMutation.mutate({ kind: "finalize" })}
+                disabled={controlMutation.isPending}
+              >
+                <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                회의 종료
               </Button>
             ) : null}
             {canReopenDiscussion(room) ? (
@@ -317,13 +397,66 @@ export function MeetingRoomPanel({
         </div>
       </div>
 
+      <div className="rounded-2xl border border-border bg-background/70 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+            한눈에 보기
+          </div>
+          {finalSummaryEntry ? (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => finalSummaryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              최종 정리 원문 보기 ↓
+            </button>
+          ) : meetingCompletedEntry ? (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => finalSummaryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            >
+              대화에서 종료 안내 보기 ↓
+            </button>
+          ) : null}
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {[
+            { label: "한 줄 결론", body: meetingOverview.conclusion, tone: "border-emerald-500/20 bg-emerald-500/5" },
+            { label: "현재 결정", body: meetingOverview.currentDecision, tone: "border-border bg-card/70" },
+            { label: "다음 행동", body: meetingOverview.nextAction, tone: "border-border bg-card/70" },
+            { label: "담당자", body: overviewOwner, tone: "border-border bg-card/70" },
+          ].map((item) => (
+            <div key={item.label} className={cn("rounded-[18px] border px-4 py-3", item.tone)}>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{item.label}</div>
+              <div className="mt-2 text-sm leading-6 text-foreground">{item.body}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className={cn("grid gap-4", compactClass)}>
         <div className="rounded-2xl border border-border bg-background/70">
         <div className="border-b border-border px-4 py-3">
-          <div className="text-sm font-semibold text-foreground">회의 transcript</div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            raw 댓글이 아니라 orchestrator가 정규화한 transcript 기준으로 표시합니다.
-          </p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-foreground">회의 대화</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                라운드별 발언, 정리, 내 의견을 시간 순서로 보여줍니다.
+              </p>
+            </div>
+            {!compact ? (
+              <button
+                type="button"
+                className="mt-0.5 rounded-lg p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                onClick={() => setMetaPanelOpen((prev) => !prev)}
+                title={metaPanelOpen ? "상세 정보 패널 접기" : "상세 정보 패널 펼치기"}
+              >
+                <PanelRight className={cn("h-4 w-4 transition-transform duration-200", !metaPanelOpen && "scale-x-[-1]")} />
+              </button>
+            ) : null}
+          </div>
         </div>
           <div className="space-y-4 p-4">
             {transcript.length === 0 ? (
@@ -334,8 +467,14 @@ export function MeetingRoomPanel({
               const authorName = transcriptAuthorName(entry, agentById);
               const isSystem = entry.authorKind === "system";
               const collapseByDefault = shouldCollapseMeetingTranscriptEntry(entry);
+              const isConclusionAnchor = entry.entryKind === "final_summary"
+                || (!finalSummaryEntry && entry.entryKind === "meeting_completed");
               return (
-                <div key={`${entry.entryKind}:${entry.sourceCommentId ?? entry.createdAt.toString()}`} className="space-y-2">
+                <div
+                  key={`${entry.entryKind}:${entry.sourceCommentId ?? entry.createdAt.toString()}`}
+                  className="space-y-2"
+                  ref={isConclusionAnchor ? finalSummaryRef : undefined}
+                >
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-medium text-foreground">{authorName}</span>
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]">
@@ -356,7 +495,7 @@ export function MeetingRoomPanel({
                         </div>
                         <div className="flex items-center justify-between gap-2">
                           <div className="text-xs text-muted-foreground">
-                            CEO/CTO/CMO 원문을 다시 길게 반복하지 않도록 기본 접힘 상태로 보여줍니다.
+                            원문은 기본으로 접혀 있습니다. 자세히 보려면 펼쳐주세요.
                           </div>
                           <CollapsibleTrigger asChild>
                             <Button type="button" size="sm" variant="outline">
@@ -387,9 +526,9 @@ export function MeetingRoomPanel({
               );
             })}
             <div className="rounded-xl border border-border bg-card/70 p-3">
-              <div className="text-sm font-semibold text-foreground">운영자 코멘트</div>
+              <div className="text-sm font-semibold text-foreground">내 의견 남기기</div>
               <p className="mt-1 text-xs text-muted-foreground">
-                방금 읽은 회의 글 아래에서 바로 답글처럼 남길 수 있습니다. 저장된 코멘트는 transcript에 보이고, 이후 재촉·다음 라운드·최종 요약 요청 시 프롬프트에도 함께 반영됩니다.
+                대화 흐름 아래에 바로 의견을 남길 수 있습니다. 이후 재촉·다음 라운드·최종 정리 요청 시 AI에게 함께 전달됩니다.
               </p>
               <Textarea
                 value={operatorCommentBody}
@@ -402,8 +541,8 @@ export function MeetingRoomPanel({
               <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="text-xs text-muted-foreground">
                   {canComposeOperatorComment
-                    ? "현재 라운드를 바로 바꾸지는 않지만, 다음 회의 전이에서 운영자 의견으로 반영됩니다."
-                    : "완료되었거나 종료된 회의에는 새 운영자 코멘트를 추가할 수 없습니다."}
+                    ? "지금 당장 라운드를 바꾸지는 않고, 다음 진행 시 AI에게 전달됩니다."
+                    : "완료되거나 종료된 회의에는 의견을 추가할 수 없습니다."}
                 </div>
                 <Button
                   type="button"
@@ -411,13 +550,14 @@ export function MeetingRoomPanel({
                   onClick={() => operatorCommentMutation.mutate(operatorCommentBody.trim())}
                   disabled={!canComposeOperatorComment || !operatorCommentBody.trim() || operatorCommentMutation.isPending}
                 >
-                  {operatorCommentMutation.isPending ? "등록 중…" : "운영자 코멘트 추가"}
+                  {operatorCommentMutation.isPending ? "등록 중…" : "의견 등록"}
                 </Button>
               </div>
             </div>
           </div>
         </div>
 
+        {compact || metaPanelOpen ? (
         <div className="space-y-4">
           <div className="rounded-2xl border border-border bg-background/70 p-4">
             <div className="text-sm font-semibold text-foreground">실행 규모와 가드레일</div>
@@ -466,11 +606,21 @@ export function MeetingRoomPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-border bg-background/70">
+          <Collapsible open={roundStatusOpen} onOpenChange={setRoundStatusOpen} className="rounded-2xl border border-border bg-background/70">
             <div className="border-b border-border px-4 py-3">
-              <div className="text-sm font-semibold text-foreground">현재 라운드 상태</div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">현재 라운드 상태</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{roundPanelSummary}</div>
+                </div>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" size="sm" variant="outline">
+                    {roundStatusOpen ? "접기" : "자세히 보기"}
+                  </Button>
+                </CollapsibleTrigger>
+              </div>
             </div>
-            <div className="space-y-3 p-4">
+            <CollapsibleContent className="space-y-3 p-4">
               {room.currentRoundParticipants.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
                   {roundEmptyMessage}
@@ -489,8 +639,8 @@ export function MeetingRoomPanel({
                   />
                 );
               })}
-            </div>
-          </div>
+            </CollapsibleContent>
+          </Collapsible>
 
           <div className="rounded-2xl border border-border bg-background/70 p-4">
             <div className="text-sm font-semibold text-foreground">참가자</div>
@@ -517,6 +667,7 @@ export function MeetingRoomPanel({
             </div>
           </div>
         </div>
+        ) : null}
       </div>
     </div>
   );

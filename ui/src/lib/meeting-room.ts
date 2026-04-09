@@ -22,6 +22,51 @@ export interface MeetingStatusNotice {
   body: string;
 }
 
+export interface MeetingOverview {
+  conclusion: string;
+  currentDecision: string;
+  nextAction: string;
+  ownerKind: "operator" | "summary_agent" | "current_round_participants";
+  ownerAgentIds: string[];
+}
+
+function cleanMeetingSummaryLine(line: string): string {
+  return line
+    .replace(/^[#>*\-\d.\s]+/u, "")
+    .replace(/\[(.*?)\]\((.*?)\)/gu, "$1")
+    .replace(/\*\*(.*?)\*\*/gu, "$1")
+    .trim();
+}
+
+function firstMeaningfulMeetingLine(body: string): string | null {
+  const lines = body.split(/\r?\n/u).map(cleanMeetingSummaryLine);
+  return lines.find((line) => line.length > 0) ?? null;
+}
+
+function findMeetingSectionLine(body: string, headings: string[]): string | null {
+  const lines = body.split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const normalized = cleanMeetingSummaryLine(lines[index] ?? "");
+    if (!normalized) continue;
+    const matchedHeading = headings.find((heading) => normalized.startsWith(heading));
+    if (!matchedHeading) continue;
+
+    const inlineValue = normalized.slice(matchedHeading.length).replace(/^[:：]\s*/u, "").trim();
+    if (inlineValue) {
+      return inlineValue;
+    }
+
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+      const nextLine = cleanMeetingSummaryLine(lines[nextIndex] ?? "");
+      if (nextLine) {
+        return nextLine;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function formatMeetingStatusLabel(status: IssueMeetingStatus): string {
   if (status === "draft") return "준비 중";
   if (status === "running") return "진행 중";
@@ -77,6 +122,31 @@ export function canReopenDiscussion(room: MeetingRoomDTO): boolean {
   return room.meeting.status === "awaiting_operator" && room.meeting.currentRoundKind === "summary";
 }
 
+export function canFinalizeMeeting(room: MeetingRoomDTO): boolean {
+  const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
+  return (
+    room.meeting.status === "awaiting_operator"
+    && currentRound?.kind === "summary"
+    && currentRound.status === "completed"
+  );
+}
+
+export function continueMeetingLabel(room: MeetingRoomDTO): string {
+  if (room.meeting.currentRoundKind === "opening") {
+    return "토론으로 진행";
+  }
+
+  const discussionRoundsUsed = room.rounds.filter((round) => round.kind === "discussion" || round.kind === "followup").length;
+  if (
+    (room.meeting.currentRoundKind === "discussion" || room.meeting.currentRoundKind === "followup")
+    && discussionRoundsUsed >= room.meeting.maxDiscussionRounds
+  ) {
+    return "최종 요약으로 진행";
+  }
+
+  return "다음 토론 라운드";
+}
+
 export function canRequestMeetingSummary(room: MeetingRoomDTO): boolean {
   return (
     (room.meeting.status === "running" || room.meeting.status === "awaiting_operator")
@@ -102,12 +172,162 @@ export function summarizeMeetingTranscriptEntry(entry: MeetingTranscriptEntry): 
   if (entry.entryKind !== "round_summary") return "";
 
   const respondedCount = entry.body.match(/수집된 응답:\s*(\d+)건/u)?.[1] ?? null;
-  const parts = [`라운드 ${entry.roundNumber ?? "?"} 요약`];
+  const parts = [`라운드 ${entry.roundNumber ?? "?"} 정리`];
   if (respondedCount) {
     parts.push(`응답 ${respondedCount}건`);
   }
-  parts.push("기본 접힘");
   return parts.join(" · ");
+}
+
+export function summarizeCurrentRoundPanel(room: MeetingRoomDTO): string {
+  const total = room.currentRoundParticipants.length;
+  if (total === 0) {
+    return "지금 볼 참가자 상태가 없습니다";
+  }
+
+  const responded = room.currentRoundParticipants.filter((participant) => participant.status === "responded").length;
+  if (responded === total) {
+    return `모두 응답했습니다 (${responded}/${total})`;
+  }
+
+  const attentionCount = room.currentRoundParticipants.filter((participant) =>
+    participant.status === "blocked"
+    || participant.status === "failed"
+    || participant.status === "timed_out"
+    || participant.status === "late",
+  ).length;
+  const waiting = total - responded;
+
+  if (attentionCount > 0) {
+    return `응답 ${responded}/${total} · 확인 필요 ${attentionCount}`;
+  }
+
+  return `응답 ${responded}/${total} · 대기 ${waiting}`;
+}
+
+export function shouldAutoCollapseCurrentRoundPanel(room: MeetingRoomDTO): boolean {
+  const total = room.currentRoundParticipants.length;
+  if (total === 0) {
+    return true;
+  }
+
+  const responded = room.currentRoundParticipants.filter((participant) => participant.status === "responded").length;
+  if (responded === total) {
+    return true;
+  }
+
+  return room.meeting.status === "completed" || room.meeting.status === "partial_completed";
+}
+
+export function describeMeetingOverview(room: MeetingRoomDTO): MeetingOverview {
+  const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
+  const totalParticipants = room.currentRoundParticipants.length;
+  const respondedParticipants = room.currentRoundParticipants.filter((participant) => participant.status === "responded").length;
+  const transcriptNewestFirst = [...room.transcript].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  );
+  const finalSummaryEntry = transcriptNewestFirst.find((entry) => entry.entryKind === "final_summary") ?? null;
+  const operatorCommentEntry = transcriptNewestFirst.find((entry) => entry.entryKind === "operator_comment") ?? null;
+  const roundSummaryEntry = transcriptNewestFirst.find((entry) => entry.entryKind === "round_summary") ?? null;
+
+  const conclusion = finalSummaryEntry
+    ? (
+      findMeetingSectionLine(finalSummaryEntry.body, ["최종 결론", "권장 결론", "한 줄 결론", "한줄 결론"])
+      ?? firstMeaningfulMeetingLine(finalSummaryEntry.body)
+      ?? "최종 정리가 준비되었습니다."
+    )
+    : operatorCommentEntry
+      ? (
+        findMeetingSectionLine(operatorCommentEntry.body, ["한 줄 결론", "한줄 결론"])
+        ?? firstMeaningfulMeetingLine(operatorCommentEntry.body)
+        ?? "내 의견이 추가되었습니다."
+      )
+      : roundSummaryEntry
+        ? summarizeMeetingTranscriptEntry(roundSummaryEntry)
+        : room.meeting.status === "running"
+          ? "참가자 의견을 모으는 중입니다."
+          : room.meeting.status === "awaiting_operator"
+            ? "현재까지 모인 의견을 보고 다음 행동을 정할 단계입니다."
+            : room.meeting.status === "completed" || room.meeting.status === "partial_completed"
+              ? "회의 결론이 정리되었습니다."
+              : "회의 준비 상태를 먼저 확인해 주세요.";
+
+  let currentDecision = "현재 상태를 확인해 주세요.";
+  if (room.meeting.status === "draft") {
+    currentDecision = "아직 회의를 시작하지 않았습니다.";
+  } else if (room.meeting.status === "running") {
+    currentDecision = totalParticipants > 0
+      ? `현재 ${formatMeetingRoundKindLabel(room.meeting.currentRoundKind)} 라운드에서 응답 ${respondedParticipants}/${totalParticipants}건을 모으는 중입니다.`
+      : "현재 라운드가 열려 있지만 아직 표시할 참가자 상태가 없습니다.";
+  } else if (room.meeting.status === "awaiting_operator") {
+    if (canFinalizeMeeting(room)) {
+      currentDecision = "최종 요약은 준비됐고, 회의는 아직 닫히지 않았습니다.";
+    } else if (currentRound?.kind === "summary") {
+      currentDecision = "최종 요약을 보고 종료할지, 다시 토론할지 운영자가 정할 차례입니다.";
+    } else if (totalParticipants > 0) {
+      currentDecision = `현재 라운드 응답은 ${respondedParticipants}/${totalParticipants}건까지 확인됐습니다.`;
+    } else {
+      currentDecision = "현재까지 모인 의견을 검토한 뒤 다음 단계를 정할 수 있습니다.";
+    }
+  } else if (room.meeting.status === "paused") {
+    currentDecision = "회의가 잠시 멈춰 있고, 재개 전까지 새 응답은 더 진행되지 않습니다.";
+  } else if (room.meeting.status === "failed") {
+    currentDecision = "진행 실패 상태라 원인 확인과 다음 조치 판단이 필요합니다.";
+  } else if (room.meeting.status === "completed" || room.meeting.status === "partial_completed") {
+    currentDecision = "회의는 종료됐고, 결론과 후속 작업만 정리하면 됩니다.";
+  }
+
+  let nextAction = "현재 상태를 확인해 다음 행동을 정하세요.";
+  if (canStartMeeting(room)) {
+    nextAction = "회의 시작을 눌러 첫 의견 수집을 시작하세요.";
+  } else if (canFinalizeMeeting(room)) {
+    nextAction = "요약을 확인한 뒤 회의를 종료하거나, 더 논의가 필요하면 전원 재토론을 여세요.";
+  } else if (canReopenDiscussion(room)) {
+    nextAction = "지금 결론으로 충분하면 회의를 종료하고, 더 얘기해야 하면 전원 재토론을 여세요.";
+  } else if (canContinueMeeting(room)) {
+    nextAction = `${continueMeetingLabel(room)} 버튼으로 자연스럽게 이어가세요.`;
+  } else if (canRequestMeetingSummary(room)) {
+    nextAction = "토론이 충분하면 최종 요약으로 넘기고, 더 필요하면 조금 더 기다리세요.";
+  } else if (room.meeting.status === "running") {
+    nextAction = "응답이 더 들어올 때까지 기다리거나, 필요하면 일시중지로 흐름을 조절하세요.";
+  } else if (room.meeting.status === "paused") {
+    nextAction = "준비되면 재개를 눌러 토론을 다시 이어가세요.";
+  } else if (room.meeting.status === "completed" || room.meeting.status === "partial_completed") {
+    nextAction = "결론을 확인하고 필요한 후속 작업만 정리하면 됩니다.";
+  } else if (room.meeting.status === "failed") {
+    nextAction = "최근 진행 안내를 확인한 뒤 재시도 여부를 판단하세요.";
+  }
+
+  if (canFinalizeMeeting(room) || currentRound?.kind === "summary") {
+    return {
+      conclusion,
+      currentDecision,
+      nextAction,
+      ownerKind: "summary_agent",
+      ownerAgentIds: room.meeting.summaryAgentId ? [room.meeting.summaryAgentId] : [],
+    };
+  }
+
+  if (room.meeting.status === "running" && room.currentRoundParticipants.length > 0) {
+    const waitingAgentIds = room.currentRoundParticipants
+      .filter((participant) => participant.status !== "responded")
+      .map((participant) => participant.agentId);
+    return {
+      conclusion,
+      currentDecision,
+      nextAction,
+      ownerKind: "current_round_participants",
+      ownerAgentIds: waitingAgentIds.length > 0 ? waitingAgentIds : room.currentRoundParticipants.map((participant) => participant.agentId),
+    };
+  }
+
+  return {
+    conclusion,
+    currentDecision,
+    nextAction,
+    ownerKind: "operator",
+    ownerAgentIds: [],
+  };
 }
 
 export function canRemindMeetingParticipant(
@@ -171,6 +391,7 @@ export function meetingGuardrailNotes(room: MeetingRoomDTO): string[] {
 }
 
 export function describeMeetingStatus(room: MeetingRoomDTO): MeetingStatusNotice {
+  const currentRound = room.rounds.find((round) => round.roundNumber === room.meeting.currentRoundNumber) ?? null;
   if (room.meeting.status === "draft") {
     return {
       tone: "neutral",
@@ -179,6 +400,13 @@ export function describeMeetingStatus(room: MeetingRoomDTO): MeetingStatusNotice
     };
   }
   if (room.meeting.status === "awaiting_operator") {
+    if (currentRound?.kind === "summary" && currentRound.status === "completed") {
+      return {
+        tone: "warning",
+        title: "최종 요약이 준비되었습니다",
+        body: "요약 결론을 검토한 뒤 회의를 종료하거나, 더 논의가 필요하면 전원 재토론을 다시 여세요.",
+      };
+    }
     return {
       tone: "warning",
       title: "운영자 판단이 필요합니다",

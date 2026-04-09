@@ -839,7 +839,13 @@ export function IssueDetail() {
 
   if (isLoading) return <p className="text-sm text-muted-foreground">불러오는 중...</p>;
   if (error) return <p className="text-sm text-destructive">{error.message}</p>;
-  if (!issue) return null;
+  if (!issue) {
+    return (
+      <div className="rounded-xl border border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+        요청한 이슈를 찾지 못했습니다.
+      </div>
+    );
+  }
 
   const isOrchestratedMeeting = isIssueDetailReadOnly(issue);
 
@@ -908,10 +914,35 @@ export function IssueDetail() {
     </>
   );
 
+  // Root meeting ancestor: the oldest ancestor that is an orchestrated meeting root
+  const rootMeetingAncestor = ancestors.length > 0
+    ? ancestors[ancestors.length - 1]
+    : null;
+  const rootMeetingAncestorMode = (rootMeetingAncestor as { meetingMode?: string | null } | null)?.meetingMode ?? null;
+  const isChildOfMeeting = rootMeetingAncestorMode === "orchestrated";
+  const isMeetingReadingSurface = issue.meetingMode === "orchestrated" || isChildOfMeeting;
+
   return (
-    <div className="max-w-2xl space-y-6">
-      {/* Parent chain breadcrumb */}
-      {ancestors.length > 0 && (
+    <div className={cn(isMeetingReadingSurface ? "max-w-6xl" : "max-w-4xl", "space-y-6")}>
+      {/* Context card: shown when this issue is a child of an orchestrated meeting */}
+      {isChildOfMeeting && rootMeetingAncestor ? (
+        <div className="rounded-xl border border-border bg-card/60 px-4 py-3 text-sm">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-muted-foreground">
+              <span className="font-medium text-foreground">{rootMeetingAncestor.title}</span>
+              {" "}회의의 하위 작업입니다
+            </span>
+            <Link
+              to={createIssueDetailPath(rootMeetingAncestor.identifier ?? rootMeetingAncestor.id, location.state, location.search)}
+              state={location.state}
+              className="shrink-0 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              회의실로 돌아가기 →
+            </Link>
+          </div>
+        </div>
+      ) : ancestors.length > 0 ? (
+        /* Parent chain breadcrumb for non-meeting hierarchy */
         <nav className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap">
           {[...ancestors].reverse().map((ancestor, i) => (
             <span key={ancestor.id} className="flex items-center gap-1">
@@ -929,7 +960,7 @@ export function IssueDetail() {
           <ChevronRight className="h-3 w-3 shrink-0" />
           <span className="text-foreground/60 truncate max-w-[200px]">{issue.title}</span>
         </nav>
-      )}
+      ) : null}
 
       {issue.hiddenAt && (
         <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -952,7 +983,7 @@ export function IssueDetail() {
             priority={issue.priority}
             onChange={(priority) => updateIssue.mutate({ priority })}
           />
-          <span className="text-sm font-mono text-muted-foreground shrink-0">{issue.identifier ?? issue.id.slice(0, 8)}</span>
+          <span className="text-sm font-mono text-muted-foreground/50 shrink-0">{issue.identifier ?? issue.id.slice(0, 8)}</span>
 
           {hasLiveRuns && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-2 py-0.5 text-[10px] font-medium text-cyan-600 dark:text-cyan-400 shrink-0">

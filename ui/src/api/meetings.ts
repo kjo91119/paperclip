@@ -14,6 +14,7 @@ export const meetingsApi = {
   continue: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/continue`, {}),
   reopenDiscussion: (issueId: string) =>
     api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/reopen-discussion`, {}),
+  finalize: (issueId: string) => api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/finalize`, {}),
   summary: (issueId: string, data?: { summaryAgentId?: string | null }) =>
     api.post<MeetingRoomDTO>(`/issues/${issueId}/meeting/summary`, data ?? {}),
   remind: (issueId: string, agentId: string) =>

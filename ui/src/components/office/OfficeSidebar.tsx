@@ -66,14 +66,14 @@ export function OfficeSidebar({
                 className="block rounded-2xl border border-border bg-background/70 px-3 py-3 transition-colors hover:bg-accent/60"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <span className="truncate text-sm font-medium text-foreground">
-                    {issue.identifier ?? issue.id.slice(0, 8)}
-                  </span>
-                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                  <span className="truncate text-sm font-medium text-foreground line-clamp-2">{issue.title}</span>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-muted-foreground shrink-0">
                     {formatStatusLabel(issue.status)}
                   </span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{issue.title}</p>
+                {issue.identifier ? (
+                  <p className="mt-1 text-[10px] text-muted-foreground/50 font-mono">{issue.identifier}</p>
+                ) : null}
               </Link>
             ))
           ) : (
