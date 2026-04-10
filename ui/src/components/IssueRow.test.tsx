@@ -1,19 +1,14 @@
-// @vitest-environment jsdom
-
-import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ComponentProps } from "react";
 import type { Issue } from "@paperclipai/shared";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueRow } from "./IssueRow";
 
 vi.mock("@/lib/router", () => ({
-  Link: ({ children, className, ...props }: React.ComponentProps<"a">) => (
+  Link: ({ children, className, ...props }: ComponentProps<"a">) => (
     <a className={className} {...props}>{children}</a>
   ),
 }));
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 function createIssue(overrides: Partial<Issue> = {}): Issue {
   return {
@@ -58,59 +53,51 @@ function createIssue(overrides: Partial<Issue> = {}): Issue {
   };
 }
 
+function renderIssueRowMarkup(props: ComponentProps<typeof IssueRow>) {
+  return renderToStaticMarkup(<IssueRow {...props} />);
+}
+
 describe("IssueRow", () => {
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-  });
-
-  afterEach(() => {
-    container.remove();
-  });
-
   it("suppresses accent hover styling when the row is selected", () => {
-    const root = createRoot(container);
-    const issue = createIssue();
+    const html = renderIssueRowMarkup({ issue: createIssue(), selected: true });
 
-    act(() => {
-      root.render(<IssueRow issue={issue} selected />);
-    });
-
-    const link = container.querySelector("[data-inbox-issue-link]") as HTMLAnchorElement | null;
-    expect(link).not.toBeNull();
-    expect(link?.className).toContain("hover:bg-transparent");
-    expect(link?.className).not.toContain("hover:bg-accent/50");
-
-    act(() => {
-      root.unmount();
-    });
+    expect(html).toContain("data-inbox-issue-link");
+    expect(html).toContain("hover:bg-transparent");
+    expect(html).not.toContain("hover:bg-accent/50");
   });
 
   it("neutralizes selected status and unread dot accents", () => {
-    const root = createRoot(container);
-
-    act(() => {
-      root.render(<IssueRow issue={createIssue()} selected unreadState="visible" />);
+    const html = renderIssueRowMarkup({
+      issue: createIssue(),
+      selected: true,
+      unreadState: "visible",
     });
 
-    const markReadButton = container.querySelector('button[aria-label="Mark as read"]');
-    const unreadDot = markReadButton?.querySelector("span");
-    const statusIcon = container.querySelector('span[class*="border-muted-foreground"]');
+    expect(html).toContain('aria-label="Mark as read"');
+    expect(html).toContain("hover:bg-muted/80");
+    expect(html).not.toContain("hover:bg-blue-500/20");
+    expect(html).toContain("bg-muted-foreground/70");
+    expect(html).not.toContain("bg-blue-600");
+    expect(html).toContain("!border-muted-foreground");
+    expect(html).toContain("!text-muted-foreground");
+  });
 
-    expect(markReadButton).not.toBeNull();
-    expect(markReadButton?.className).toContain("hover:bg-muted/80");
-    expect(markReadButton?.className).not.toContain("hover:bg-blue-500/20");
-    expect(unreadDot).not.toBeNull();
-    expect(unreadDot?.className).toContain("bg-muted-foreground/70");
-    expect(unreadDot?.className).not.toContain("bg-blue-600");
-    expect(statusIcon).not.toBeNull();
-    expect(statusIcon?.className).toContain("!border-muted-foreground");
-    expect(statusIcon?.className).toContain("!text-muted-foreground");
+  it("shows a human summary line and de-emphasized work number", () => {
+    const html = renderIssueRowMarkup({
+      issue: createIssue({
+        title: "[CTO] 운영 인력용 최소권한 admin role 분리",
+        description: `## Objective
 
-    act(() => {
-      root.unmount();
+운영 리드와 콘텐츠 운영 권한을 나누는 안을 정해주세요.
+
+## Deliverable
+
+        - 역할 3개로 정리`,
+      }),
     });
+
+    expect(html).toContain("운영 인력용 최소권한 admin role 분리");
+    expect(html).toContain("운영 리드와 콘텐츠 운영 권한을 나누는 안을 정해주세요.");
+    expect(html).toContain("작업 #1");
   });
 });

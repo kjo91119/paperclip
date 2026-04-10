@@ -4,6 +4,7 @@ import { Link } from "@/lib/router";
 import { X } from "lucide-react";
 import { createIssueDetailPath } from "../lib/issueDetailBreadcrumb";
 import { cn } from "../lib/utils";
+import { buildIssueBrief } from "../lib/issue-brief";
 import { StatusIcon } from "./StatusIcon";
 
 type UnreadState = "hidden" | "visible" | "fading";
@@ -13,7 +14,8 @@ interface IssueRowProps {
   issueLinkState?: unknown;
   selected?: boolean;
   mobileLeading?: ReactNode;
-  desktopMetaLeading?: ReactNode;
+  desktopStatusSlot?: ReactNode;
+  desktopMetaBadges?: ReactNode;
   desktopLeadingSpacer?: boolean;
   mobileMeta?: ReactNode;
   desktopTrailing?: ReactNode;
@@ -30,7 +32,8 @@ export function IssueRow({
   issueLinkState,
   selected = false,
   mobileLeading,
-  desktopMetaLeading,
+  desktopStatusSlot,
+  desktopMetaBadges,
   desktopLeadingSpacer = false,
   mobileMeta,
   desktopTrailing,
@@ -42,10 +45,11 @@ export function IssueRow({
   className,
 }: IssueRowProps) {
   const issuePathId = issue.identifier ?? issue.id;
-  const identifier = issue.identifier ?? issue.id.slice(0, 8);
+  const identifier = issue.issueNumber ?? issue.identifier ?? issue.id.slice(0, 8);
   const showUnreadSlot = unreadState !== null;
   const showUnreadDot = unreadState === "visible" || unreadState === "fading";
   const selectedStatusClass = selected ? "!text-muted-foreground !border-muted-foreground" : undefined;
+  const issueBrief = buildIssueBrief({ title: issue.title, description: issue.description });
 
   return (
     <Link
@@ -62,23 +66,32 @@ export function IssueRow({
         {mobileLeading ?? <StatusIcon status={issue.status} className={selectedStatusClass} />}
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-1 sm:contents">
-        <span className="line-clamp-2 text-sm sm:order-2 sm:min-w-0 sm:flex-1 sm:truncate sm:line-clamp-none">
-          {issue.title}
+        <span className="sm:order-1 sm:min-w-0 sm:flex-1">
+          <span className="line-clamp-2 text-sm font-medium sm:block sm:truncate sm:line-clamp-none">
+            {issueBrief.cleanTitle}
+          </span>
+          {issueBrief.summary ? (
+            <span className="mt-1 line-clamp-1 block text-xs text-muted-foreground">
+              {issueBrief.summary}
+            </span>
+          ) : null}
         </span>
-        <span className="flex items-center gap-2 sm:order-1 sm:shrink-0">
+        <span className="flex items-center gap-2 sm:order-2 sm:shrink-0">
           {desktopLeadingSpacer ? (
             <span className="hidden w-3.5 shrink-0 sm:block" />
           ) : null}
-          {desktopMetaLeading ?? (
-            <>
-              <span className="hidden shrink-0 sm:inline-flex">
-                <StatusIcon status={issue.status} className={selectedStatusClass} />
-              </span>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                {identifier}
-              </span>
-            </>
-          )}
+          <span className="hidden shrink-0 sm:inline-flex">
+            {desktopStatusSlot ?? <StatusIcon status={issue.status} className={selectedStatusClass} />}
+          </span>
+          {issueBrief.badge ? (
+            <span className="inline-flex shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {issueBrief.badge}
+            </span>
+          ) : null}
+          <span className="shrink-0 font-mono text-[11px] text-muted-foreground/35">
+            작업 #{identifier}
+          </span>
+          {desktopMetaBadges}
           {mobileMeta ? (
             <>
               <span className="text-xs text-muted-foreground sm:hidden" aria-hidden="true">

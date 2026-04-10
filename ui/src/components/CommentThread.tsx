@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState, type ChangeEvent } from "re
 import { Link, useLocation } from "react-router-dom";
 import type { IssueComment, Agent } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
-import { Check, Copy, Paperclip } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Check, ChevronDown, Copy, Paperclip } from "lucide-react";
 import { Identity } from "./Identity";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { MarkdownBody } from "./MarkdownBody";
@@ -11,6 +12,7 @@ import { StatusBadge } from "./StatusBadge";
 import { AgentIcon } from "./AgentIconPicker";
 import { formatDateTime } from "../lib/utils";
 import { restoreSubmittedCommentDraft } from "../lib/comment-submit-draft";
+import { buildCommentBrief } from "../lib/issue-brief";
 import { PluginSlotOutlet } from "@/plugins/slots";
 
 interface CommentWithRunMeta extends IssueComment {
@@ -140,6 +142,12 @@ function CommentCard({
   const isHighlighted = highlightCommentId === comment.id;
   const isPending = comment.clientStatus === "pending";
   const isQueued = queued || comment.queueState === "queued" || comment.clientStatus === "queued";
+  const commentBrief = useMemo(() => buildCommentBrief(comment.body), [comment.body]);
+  const [rawOpen, setRawOpen] = useState(!commentBrief.showSummaryCard);
+
+  useEffect(() => {
+    setRawOpen(!commentBrief.showSummaryCard);
+  }, [comment.id, commentBrief.showSummaryCard]);
 
   return (
     <div
@@ -152,7 +160,7 @@ function CommentCard({
             ? "border-primary/50 bg-primary/5"
             : "border-border"
       } ${isPending ? "opacity-80" : ""}`}
-    >
+      >
       <div className="flex items-center justify-between mb-1">
         {comment.authorKind === "agent" && comment.authorAgentId ? (
           <Link to={`/agents/${comment.authorAgentId}`} className="hover:underline">
@@ -201,7 +209,72 @@ function CommentCard({
           <CopyMarkdownButton text={comment.body} />
         </span>
       </div>
-      <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      {commentBrief.showSummaryCard ? (
+        <div className="mb-3 rounded-lg border border-border/70 bg-background/70 p-3">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            쉽게 읽기
+          </div>
+          <p className="mt-2 text-sm leading-6 text-foreground">
+            {commentBrief.summary}
+          </p>
+          {(commentBrief.statusItems.length > 0 || commentBrief.actionItems.length > 0 || commentBrief.noteItems.length > 0) ? (
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              {commentBrief.statusItems.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground">지금 상태</div>
+                  <ul className="space-y-1 text-xs leading-5 text-foreground">
+                    {commentBrief.statusItems.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400/70" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {commentBrief.actionItems.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground">다음 할 일</div>
+                  <ul className="space-y-1 text-xs leading-5 text-foreground">
+                    {commentBrief.actionItems.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400/70" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {commentBrief.noteItems.length > 0 ? (
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground">추가 메모</div>
+                  <ul className="space-y-1 text-xs leading-5 text-foreground">
+                    {commentBrief.noteItems.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400/70" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {commentBrief.showSummaryCard ? (
+        <Collapsible open={rawOpen} onOpenChange={setRawOpen} className="rounded-lg border border-border/60">
+          <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left">
+            <span className="text-xs font-medium text-muted-foreground">원문 보기</span>
+            <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${rawOpen ? "rotate-180" : ""}`} />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="border-t border-border/60 px-3 py-3">
+            <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : (
+        <MarkdownBody className="text-sm">{comment.body}</MarkdownBody>
+      )}
       {companyId && !isPending ? (
         <div className="mt-2 space-y-2">
           <PluginSlotOutlet

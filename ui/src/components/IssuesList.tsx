@@ -716,23 +716,21 @@ export function IssuesList({
                       />
                     </span>
                   )}
-                  desktopMetaLeading={(
+                  desktopStatusSlot={(
+                    <span
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                    >
+                      <StatusIcon
+                        status={issue.status}
+                        onChange={(s) => onUpdateIssue(issue.id, { status: s })}
+                      />
+                    </span>
+                  )}
+                  desktopMetaBadges={(
                     <>
-                      <span
-                        className="hidden shrink-0 sm:inline-flex"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                      >
-                        <StatusIcon
-                          status={issue.status}
-                          onChange={(s) => onUpdateIssue(issue.id, { status: s })}
-                        />
-                      </span>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                        {issue.identifier ?? issue.id.slice(0, 8)}
-                      </span>
                       {liveIssueIds?.has(issue.id) && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-1.5 py-0.5 sm:gap-1.5 sm:px-2">
                           <span className="relative flex h-2 w-2">

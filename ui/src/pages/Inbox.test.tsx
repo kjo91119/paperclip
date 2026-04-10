@@ -152,10 +152,9 @@ describe("InboxIssueMetaLeading", () => {
     const root = createRoot(container);
 
     act(() => {
-      root.render(<InboxIssueMetaLeading issue={createIssue()} selected isLive />);
+      root.render(<InboxIssueMetaLeading selected isLive />);
     });
 
-    const statusIcon = container.querySelector('span[class*="border-muted-foreground"]');
     const liveBadge = container.querySelector('span[class*="px-1.5"][class*="bg-muted"]');
     const liveBadgeLabel = Array.from(container.querySelectorAll("span")).find(
       (node) => node.textContent?.trim() === "실시간" && node.className.includes("text-"),
@@ -163,9 +162,6 @@ describe("InboxIssueMetaLeading", () => {
     const liveDot = container.querySelector('span[class*="bg-muted-foreground/70"]');
     const pulseRing = container.querySelector('span[class*="animate-pulse"]');
 
-    expect(statusIcon).not.toBeNull();
-    expect(statusIcon?.className).toContain("!border-muted-foreground");
-    expect(statusIcon?.className).toContain("!text-muted-foreground");
     expect(liveBadge).not.toBeNull();
     expect(liveBadge?.className).toContain("bg-muted");
     expect(liveBadgeLabel).not.toBeNull();

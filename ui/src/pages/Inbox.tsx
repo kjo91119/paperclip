@@ -120,25 +120,14 @@ function getSelectedUnreadDotClass(selected: boolean): string {
 }
 
 export function InboxIssueMetaLeading({
-  issue,
   selected,
   isLive,
 }: {
-  issue: Issue;
   selected: boolean;
   isLive: boolean;
 }) {
   return (
     <>
-      <span className="hidden shrink-0 sm:inline-flex">
-        <StatusIcon
-          status={issue.status}
-          className={selected ? selectedInboxAccentClass : undefined}
-        />
-      </span>
-      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-        {issue.identifier ?? issue.id.slice(0, 8)}
-      </span>
       {isLive && (
         <span
           className={cn(
@@ -1577,9 +1566,14 @@ export function Inbox() {
                       issue={issue}
                       issueLinkState={issueLinkState}
                       selected={isSelected}
-                      desktopMetaLeading={
+                      desktopStatusSlot={(
+                        <StatusIcon
+                          status={issue.status}
+                          className={isSelected ? selectedInboxAccentClass : undefined}
+                        />
+                      )}
+                      desktopMetaBadges={
                         <InboxIssueMetaLeading
-                          issue={issue}
                           selected={isSelected}
                           isLive={liveIssueIds.has(issue.id)}
                         />
