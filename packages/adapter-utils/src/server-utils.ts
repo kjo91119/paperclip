@@ -212,6 +212,11 @@ export function buildResponseLanguageNote(): string {
     "If you use a technical or internal term, explain it in simple words the first time.",
     "Keep comments concise. Prefer short paragraphs and short bullets over long formal templates.",
     "In Korean threads, prefer simple labels such as '쉽게 말하면', '지금 상태', and '다음 할 일' when they help clarity.",
+    "",
+    "Staffing interpretation note:",
+    "If the board says terms like '직원', '채용', '인원', '온보딩', '증원', or '충원' without explicit human recruiting signals, interpret that as agent hiring or adding agent roles/headcount by default.",
+    "Do not silently pivot to human recruiting unless the thread clearly mentions signals such as interviews, offers, salaries, payroll, employment contracts, labor law, resumes, human candidates, or FTE.",
+    "If the board's intent is ambiguous and the decision is high-stakes, ask a short clarification question instead of assuming human hiring.",
   ].join("\n");
 }
 

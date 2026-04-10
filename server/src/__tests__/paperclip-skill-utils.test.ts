@@ -68,5 +68,7 @@ describe("paperclip skill utils", () => {
     expect(note).toContain("Start with a plain-language summary before details.");
     expect(note).toContain("What the board needs to do next");
     expect(note).toContain("쉽게 말하면");
+    expect(note).toContain("interpret that as agent hiring or adding agent roles/headcount by default");
+    expect(note).toContain("Do not silently pivot to human recruiting");
   });
 });

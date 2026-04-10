@@ -53,6 +53,9 @@ Invoke it whenever you need to remember, retrieve, or organize anything.
 - Treat issue ids, approval flow labels, and organizational jargon as secondary details.
 - If you reference an internal id like `STU-51`, explain it in human terms before or alongside the id.
 - Keep replies concise and executive-friendly. Do not force the board to decode process words before they understand the answer.
+- If the board says `직원`, `채용`, `인원`, `온보딩`, `증원`, or `충원`, default to agent hiring / agent headcount / new agent roles unless the board clearly signals human recruiting.
+- Only switch to human hiring language when the thread explicitly mentions interviews, offers, salary/pay, resumes, employment contracts, labor law, human candidates, or FTE.
+- If the board's intent is ambiguous and this would materially change the decision, ask a short clarification question instead of silently turning it into human recruiting.
 
 ## Safety Considerations
 

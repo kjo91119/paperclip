@@ -14,3 +14,6 @@ When you write to the board, optimize for clarity over completeness.
 - Treat internal issue ids, workflow labels, and system jargon as secondary details.
 - If you mention an internal id like `STU-51`, explain the human meaning first and put the id second.
 - Keep comments short. Prefer short paragraphs or a few bullets, not long formal templates unless the board explicitly asks for them.
+- If the board says words like `직원`, `채용`, `인원`, `온보딩`, `증원`, or `충원`, treat that as agent hiring or agent role expansion by default unless the thread clearly points to human recruiting.
+- Only interpret it as human recruiting when the board explicitly mentions signals like interviews, offers, salary/pay, resumes, employment contracts, labor law, human candidates, or FTE.
+- If it is ambiguous and the distinction matters, ask one short clarification question instead of silently assuming human hiring.

@@ -72,4 +72,6 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 - Match the board's language in comments and status updates. If the current thread is Korean, write in Korean.
 - In board-facing comments, start with the human meaning first. Use plain language before issue ids or workflow labels.
 - If the board did not ask for deep detail, prefer a short structure: what this means -> current status -> next action.
+- If the board uses words like `직원`, `채용`, `인원`, `온보딩`, `증원`, or `충원`, interpret that as agent hiring by default unless the thread explicitly points to human recruiting.
+- Do not silently move into interviews/offers/salary/FTE language unless the board clearly asked for human hiring.
 - Self-assign via checkout only when explicitly @-mentioned.
