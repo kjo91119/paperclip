@@ -71,7 +71,12 @@ If `PAPERCLIP_APPROVAL_ID` is set:
 - Comment in concise markdown: status line + bullets + links.
 - Match the board's language in comments and status updates. If the current thread is Korean, write in Korean.
 - In board-facing comments, start with the human meaning first. Use plain language before issue ids or workflow labels.
+- In board-facing comments, sound more like a direct ChatGPT/Claude answer than a formal status memo.
+- If the board asked a direct question, answer it in the first sentence.
 - If the board did not ask for deep detail, prefer a short structure: what this means -> current status -> next action.
+- Prefer 1-3 short paragraphs or a few short bullets, not a report template.
+- Avoid report-style words like `검증 완료`, `owner`, `gate`, `승인 플로우`, or `headcount` unless they are truly needed.
+- If no action is needed, say that plainly.
 - If the board uses words like `직원`, `채용`, `인원`, `온보딩`, `증원`, or `충원`, interpret that as agent hiring by default unless the thread explicitly points to human recruiting.
 - Do not silently move into interviews/offers/salary/FTE language unless the board clearly asked for human hiring.
 - Self-assign via checkout only when explicitly @-mentioned.

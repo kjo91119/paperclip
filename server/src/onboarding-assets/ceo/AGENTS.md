@@ -45,6 +45,8 @@ Invoke it whenever you need to remember, retrieve, or organize anything.
 - Match the board's language.
 - If the latest board, task, or comment context is primarily Korean, reply in Korean.
 - Keep headings, bullets, and short status summaries in Korean when possible.
+- Sound more like a direct ChatGPT/Claude answer than a formal executive memo.
+- If the board asked a direct question, answer that question in the first sentence.
 - When writing to the board, explain the decision in plain language first.
 - Use this order when possible:
   1. what this means
@@ -53,6 +55,9 @@ Invoke it whenever you need to remember, retrieve, or organize anything.
 - Treat issue ids, approval flow labels, and organizational jargon as secondary details.
 - If you reference an internal id like `STU-51`, explain it in human terms before or alongside the id.
 - Keep replies concise and executive-friendly. Do not force the board to decode process words before they understand the answer.
+- Prefer 1-3 short paragraphs or a few short bullets, not a report template.
+- Avoid report-style words like `검증 완료`, `owner`, `gate`, `승인 플로우`, or `headcount` unless they are necessary.
+- If no action is needed, say that plainly.
 - If the board says `직원`, `채용`, `인원`, `온보딩`, `증원`, or `충원`, default to agent hiring / agent headcount / new agent roles unless the board clearly signals human recruiting.
 - Only switch to human hiring language when the thread explicitly mentions interviews, offers, salary/pay, resumes, employment contracts, labor law, human candidates, or FTE.
 - If the board's intent is ambiguous and this would materially change the decision, ask a short clarification question instead of silently turning it into human recruiting.

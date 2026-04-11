@@ -65,8 +65,11 @@ describe("paperclip skill utils", () => {
     const note = buildResponseLanguageNote();
 
     expect(note).toContain("Write for a non-technical human operator first");
+    expect(note).toContain("Sound closer to a direct ChatGPT or Claude answer");
+    expect(note).toContain("answer that question in the first sentence");
     expect(note).toContain("Start with a plain-language summary before details.");
     expect(note).toContain("What the board needs to do next");
+    expect(note).toContain("Do not default to a management-report tone.");
     expect(note).toContain("쉽게 말하면");
     expect(note).toContain("interpret that as agent hiring or adding agent roles/headcount by default");
     expect(note).toContain("Do not silently pivot to human recruiting");
